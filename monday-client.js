@@ -2,7 +2,9 @@ class MondayClient {
     constructor() {
         this.apiKey = null;
         this.baseUrl = 'https://api.monday.com/v2';
-        this.logger = window.diagnosticLogger;
+        this.logger = typeof window.diagnosticLogger !== 'undefined' ? window.diagnosticLogger : {
+            log: (msg, type = 'info') => console[type === 'error' ? 'error' : type === 'warn' ? 'warn' : 'log'](msg)
+        };
     }
 
     setApiKey(apiKey) {
@@ -107,16 +109,17 @@ class MondayClient {
         }
     }
 
-    async queryAllItemsInGroup(boardId, groupId, limit = 5000) {
-        this.logger?.log(`Querying all items in group: ${groupId} (limit: ${limit})`);
+    async queryAllItemsInGroup(boardId, groupId) {
+        this.logger?.log(`Querying all items in group: ${groupId}`);
 
+        // Use the maximum allowed limit of 500
         const query = `
             query GetItems($boardId: ID!, $groupId: String!) {
                 boards(ids: [$boardId]) {
                     groups(ids: [$groupId]) {
                         id
                         title
-                        items_page(limit: ${limit}) {
+                        items_page(limit: 500) {
                             items {
                                 id
                                 name
@@ -145,28 +148,6 @@ class MondayClient {
                 data.boards[0].groups[0].items_page) {
                 const items = data.boards[0].groups[0].items_page.items || [];
                 this.logger?.log(`✅ Query returned ${items.length} items`);
-
-                if (items.length > 0) {
-                    this.logger?.log('📋 SAMPLE ITEMS FROM QUERY:');
-                    items.slice(0, 3).forEach((item, index) => {
-                        this.logger?.log(`   Item ${index + 1}: "${item.name}"`, 'debug');
-                        this.logger?.log(`     ID: ${item.id}`, 'debug');
-                        if (item.column_values) {
-                            const importantColumns = item.column_values.filter(col =>
-                                col.id === 'date4' || col.id === 'person' ||
-                                col.id === 'status' || col.id === 'text__1' ||
-                                col.id === 'text8__1' || col.id === 'numbers__1'
-                            );
-                            if (importantColumns.length > 0) {
-                                this.logger?.log(`     IMPORTANT COLUMNS:`, 'debug');
-                                importantColumns.forEach(col => {
-                                    this.logger?.log(`       ${col.id}: value="${col.value}", text="${col.text}"`, 'debug');
-                                });
-                            }
-                        }
-                    });
-                }
-
                 return items;
             }
 
@@ -178,13 +159,13 @@ class MondayClient {
         }
     }
 
-    async queryItemsPaginated(boardId, groupId, limit = 5000) {
+    async queryItemsPaginated(boardId, groupId) {
         this.logger?.log(`Querying items with pagination: ${groupId}`);
 
         let allItems = [];
         let cursor = null;
         let page = 1;
-        const pageSize = 100;
+        const pageSize = 100; // Safe page size
 
         while (true) {
             const query = cursor ? `
@@ -246,18 +227,19 @@ class MondayClient {
 
                 this.logger?.log(`Page ${page}: ${pageItems.length} items (Total: ${allItems.length})`);
 
-                if (!itemsPage.cursor || pageItems.length < pageSize || allItems.length >= limit) {
+                if (!itemsPage.cursor || pageItems.length < pageSize) {
                     break;
                 }
 
                 cursor = itemsPage.cursor;
                 page++;
 
-                if (page > 50) {
-                    this.logger?.log('Reached safety limit of 50 pages', 'warn');
+                if (page > 10) { // Safety limit
+                    this.logger?.log('Reached safety limit of 10 pages', 'warn');
                     break;
                 }
 
+                // Small delay to avoid rate limiting
                 await new Promise(resolve => setTimeout(resolve, 100));
             } catch (error) {
                 this.logger?.log(`Error in paginated query page ${page}: ${error.message}`, 'error');

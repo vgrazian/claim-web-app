@@ -1,252 +1,367 @@
-// logger.js
-class DiagnosticLogger {
+class MondayClient {
     constructor() {
-        this.logs = [];
-        this.maxLogs = 1000;
-        this.isEnabled = true;
-        this.progress = {
-            current: 0,
-            total: 100,
-            message: ''
-        };
-        this.initializeLogger();
+        this.apiKey = null;
+        this.baseUrl = 'https://api.monday.com/v2';
+        this.logger = window.diagnosticLogger;
     }
 
-    initializeLogger() {
-        // Create logger UI if it doesn't exist
-        if (!document.getElementById('diagnosticLogger')) {
-            const loggerDiv = document.createElement('div');
-            loggerDiv.id = 'diagnosticLogger';
-            loggerDiv.style.cssText = `
-                position: fixed;
-                bottom: 0;
-                left: 0;
-                right: 0;
-                height: 200px;
-                background: #1e1e1e;
-                color: #00ff00;
-                font-family: 'Courier New', monospace;
-                font-size: 12px;
-                border-top: 2px solid #333;
-                z-index: 10000;
-                overflow-y: auto;
-                display: none;
-            `;
-
-            const loggerHeader = document.createElement('div');
-            loggerHeader.style.cssText = `
-                background: #333;
-                padding: 5px 10px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                border-bottom: 1px solid #555;
-            `;
-            loggerHeader.innerHTML = `
-                <strong>Diagnostic Logger</strong>
-                <div>
-                    <button id="clearLogs" style="margin-right: 10px;">Clear</button>
-                    <button id="toggleLogger">Hide</button>
-                </div>
-            `;
-
-            const loggerContent = document.createElement('div');
-            loggerContent.id = 'loggerContent';
-            loggerContent.style.cssText = `
-                padding: 10px;
-                height: calc(100% - 40px);
-                overflow-y: auto;
-            `;
-
-            loggerDiv.appendChild(loggerHeader);
-            loggerDiv.appendChild(loggerContent);
-            document.body.appendChild(loggerDiv);
-
-            // Add event listeners
-            document.getElementById('clearLogs').addEventListener('click', () => this.clearLogs());
-            document.getElementById('toggleLogger').addEventListener('click', () => this.toggleLogger());
-        }
+    setApiKey(apiKey) {
+        this.apiKey = apiKey;
+        this.logger?.log('API key set');
     }
 
-    log(message, type = 'info') {
-        if (!this.isEnabled) return;
-
-        const timestamp = new Date().toLocaleTimeString();
-        const logEntry = {
-            timestamp,
-            message,
-            type,
-            stack: new Error().stack
-        };
-
-        this.logs.push(logEntry);
-        if (this.logs.length > this.maxLogs) {
-            this.logs.shift();
+    async makeRequest(query, variables = {}) {
+        if (!this.apiKey) {
+            this.logger?.log('API key not set', 'error');
+            throw new Error('API key not set');
         }
 
-        // Also log to console
-        const consoleMethod = type === 'error' ? 'error' : type === 'warn' ? 'warn' : 'log';
-        console[consoleMethod](`[${timestamp}] ${message}`);
+        this.logger?.log('Making Monday.com API request...', 'debug');
 
-        // Update UI if visible
-        this.updateLoggerUI();
-    }
+        try {
+            const response = await fetch(this.baseUrl, {
+                method: 'POST',
+                headers: {
+                    'Authorization': this.apiKey,
+                    'Content-Type': 'application/json',
+                    'API-Version': '2023-10'
+                },
+                body: JSON.stringify({
+                    query,
+                    variables
+                })
+            });
 
-    updateLoggerUI() {
-        const loggerContent = document.getElementById('loggerContent');
-        if (loggerContent && document.getElementById('diagnosticLogger').style.display !== 'none') {
-            const lastLog = this.logs[this.logs.length - 1];
-            const logElement = document.createElement('div');
-            logElement.style.cssText = `
-                margin-bottom: 2px;
-                padding: 2px 5px;
-                border-left: 3px solid ${this.getColorForType(lastLog.type)};
-                background: ${lastLog.type === 'error' ? '#330000' : 'transparent'};
-            `;
-            logElement.innerHTML = `
-                <span style="color: #888;">[${lastLog.timestamp}]</span>
-                <span style="color: ${this.getColorForType(lastLog.type)};">${lastLog.message}</span>
-            `;
-            loggerContent.appendChild(logElement);
-            loggerContent.scrollTop = loggerContent.scrollHeight;
-        }
-    }
-
-    getColorForType(type) {
-        const colors = {
-            info: '#00ff00',
-            warn: '#ffff00',
-            error: '#ff0000',
-            debug: '#00ffff'
-        };
-        return colors[type] || '#ffffff';
-    }
-
-    clearLogs() {
-        this.logs = [];
-        const loggerContent = document.getElementById('loggerContent');
-        if (loggerContent) {
-            loggerContent.innerHTML = '';
-        }
-    }
-
-    toggleLogger() {
-        const logger = document.getElementById('diagnosticLogger');
-        const toggleButton = document.getElementById('toggleLogger');
-        if (logger.style.display === 'none') {
-            logger.style.display = 'block';
-            toggleButton.textContent = 'Hide';
-            this.updateLoggerUI();
-        } else {
-            logger.style.display = 'none';
-            toggleButton.textContent = 'Show';
-        }
-    }
-
-    showLogger() {
-        document.getElementById('diagnosticLogger').style.display = 'block';
-        document.getElementById('toggleLogger').textContent = 'Hide';
-        this.updateLoggerUI();
-    }
-
-    // Progress tracking methods
-    setProgress(current, total, message = '') {
-        this.progress = { current, total, message };
-        this.updateProgressBar();
-    }
-
-    updateProgressBar() {
-        const logger = document.getElementById('diagnosticLogger');
-        if (logger && logger.style.display !== 'none') {
-            let progressBar = document.getElementById('loggerProgressBar');
-            if (!progressBar) {
-                progressBar = document.createElement('div');
-                progressBar.id = 'loggerProgressBar';
-                progressBar.style.cssText = `
-                    background: #333;
-                    height: 4px;
-                    margin: 5px 10px;
-                    border-radius: 2px;
-                    overflow: hidden;
-                `;
-
-                const progressFill = document.createElement('div');
-                progressFill.id = 'loggerProgressFill';
-                progressFill.style.cssText = `
-                    background: #3498db;
-                    height: 100%;
-                    width: 0%;
-                    transition: width 0.3s ease;
-                `;
-
-                progressBar.appendChild(progressFill);
-                const loggerHeader = logger.querySelector('div:first-child');
-                loggerHeader.parentNode.insertBefore(progressBar, loggerHeader.nextSibling);
+            if (!response.ok) {
+                const errorText = await response.text();
+                this.logger?.log(`HTTP error! status: ${response.status}`, 'error');
+                throw new Error(`HTTP error! status: ${response.status}, response: ${errorText}`);
             }
 
-            const progressFill = document.getElementById('loggerProgressFill');
-            const percentage = this.progress.total > 0 ? (this.progress.current / this.progress.total) * 100 : 0;
-            progressFill.style.width = `${percentage}%`;
+            const result = await response.json();
 
-            // Update progress text
-            let progressText = document.getElementById('loggerProgressText');
-            if (!progressText) {
-                progressText = document.createElement('div');
-                progressText.id = 'loggerProgressText';
-                progressText.style.cssText = `
-                    color: #3498db;
-                    font-size: 11px;
-                    padding: 0 10px 5px 10px;
-                `;
-                progressBar.parentNode.insertBefore(progressText, progressBar.nextSibling);
+            if (result.errors && result.errors.length > 0) {
+                const errorMessages = result.errors.map(error => error.message).join(', ');
+                this.logger?.log(`Monday.com API error: ${errorMessages}`, 'error');
+                throw new Error(`Monday.com API error: ${errorMessages}`);
             }
-            progressText.textContent = `${this.progress.message} (${this.progress.current}/${this.progress.total})`;
+
+            this.logger?.log('API request successful', 'debug');
+            return result.data;
+        } catch (error) {
+            this.logger?.log(`Monday.com API request failed: ${error.message}`, 'error');
+            throw error;
         }
     }
 
-    // Performance monitoring
-    startTimer(label) {
-        const timer = {
-            label,
-            startTime: performance.now(),
-            endTime: null
-        };
-        this.log(`⏱️ START: ${label}`, 'debug');
-        return timer;
-    }
-
-    endTimer(timer) {
-        timer.endTime = performance.now();
-        const duration = timer.endTime - timer.startTime;
-        this.log(`⏱️ END: ${timer.label} - ${duration.toFixed(2)}ms`, 'debug');
-        return duration;
-    }
-
-    // Method to check if app is responsive
-    startResponsivenessCheck() {
-        let lastCheck = performance.now();
-        const checkInterval = setInterval(() => {
-            const now = performance.now();
-            const delta = now - lastCheck;
-            if (delta > 2000) { // If more than 2 seconds between checks, app might be frozen
-                this.log(`⚠️ Possible app freeze detected - ${delta.toFixed(0)}ms since last check`, 'warn');
+    async getCurrentUser() {
+        this.logger?.log('Getting current user...');
+        const query = `
+            {
+                me {
+                    id
+                    name
+                    email
+                }
             }
-            lastCheck = now;
-        }, 1000);
-        return checkInterval;
+        `;
+
+        try {
+            const data = await this.makeRequest(query);
+            this.logger?.log(`✅ User loaded: ${data.me.name} (${data.me.email})`);
+            return data.me;
+        } catch (error) {
+            this.logger?.log(`❌ Failed to get user: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    async getBoardWithGroups(boardId) {
+        this.logger?.log(`Getting board with groups: ${boardId}`);
+        const query = `
+            query GetBoard($boardId: ID!) {
+                boards(ids: [$boardId]) {
+                    id
+                    name
+                    groups {
+                        id
+                        title
+                    }
+                }
+            }
+        `;
+
+        try {
+            const data = await this.makeRequest(query, { boardId });
+            if (data.boards && data.boards.length > 0) {
+                const board = data.boards[0];
+                this.logger?.log(`✅ Board loaded: ${board.name} with ${board.groups?.length || 0} groups`);
+                return board;
+            } else {
+                this.logger?.log('❌ No board found', 'error');
+                throw new Error('No board found');
+            }
+        } catch (error) {
+            this.logger?.log(`❌ Failed to get board: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    async queryAllItemsInGroup(boardId, groupId, limit = 5000) {
+        this.logger?.log(`Querying all items in group: ${groupId} (limit: ${limit})`);
+
+        const query = `
+            query GetItems($boardId: ID!, $groupId: String!) {
+                boards(ids: [$boardId]) {
+                    groups(ids: [$groupId]) {
+                        id
+                        title
+                        items_page(limit: ${limit}) {
+                            items {
+                                id
+                                name
+                                column_values {
+                                    id
+                                    value
+                                    text
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        `;
+
+        const variables = {
+            boardId,
+            groupId: String(groupId)
+        };
+
+        try {
+            const data = await this.makeRequest(query, variables);
+
+            if (data.boards && data.boards.length > 0 &&
+                data.boards[0].groups && data.boards[0].groups.length > 0 &&
+                data.boards[0].groups[0].items_page) {
+                const items = data.boards[0].groups[0].items_page.items || [];
+                this.logger?.log(`✅ Query returned ${items.length} items`);
+
+                if (items.length > 0) {
+                    this.logger?.log('📋 SAMPLE ITEMS FROM QUERY:');
+                    items.slice(0, 3).forEach((item, index) => {
+                        this.logger?.log(`   Item ${index + 1}: "${item.name}"`, 'debug');
+                        this.logger?.log(`     ID: ${item.id}`, 'debug');
+                        if (item.column_values) {
+                            const importantColumns = item.column_values.filter(col =>
+                                col.id === 'date4' || col.id === 'person' ||
+                                col.id === 'status' || col.id === 'text__1' ||
+                                col.id === 'text8__1' || col.id === 'numbers__1'
+                            );
+                            if (importantColumns.length > 0) {
+                                this.logger?.log(`     IMPORTANT COLUMNS:`, 'debug');
+                                importantColumns.forEach(col => {
+                                    this.logger?.log(`       ${col.id}: value="${col.value}", text="${col.text}"`, 'debug');
+                                });
+                            }
+                        }
+                    });
+                }
+
+                return items;
+            }
+
+            this.logger?.log('Query returned no items');
+            return [];
+        } catch (error) {
+            this.logger?.log(`❌ Query failed: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    async queryItemsPaginated(boardId, groupId, limit = 5000) {
+        this.logger?.log(`Querying items with pagination: ${groupId}`);
+
+        let allItems = [];
+        let cursor = null;
+        let page = 1;
+        const pageSize = 100;
+
+        while (true) {
+            const query = cursor ? `
+                query GetItemsPage($boardId: ID!, $groupId: String!, $cursor: String!) {
+                    boards(ids: [$boardId]) {
+                        groups(ids: [$groupId]) {
+                            items_page(limit: ${pageSize}, cursor: $cursor) {
+                                cursor
+                                items {
+                                    id
+                                    name
+                                    column_values {
+                                        id
+                                        value
+                                        text
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            ` : `
+                query GetItemsPage($boardId: ID!, $groupId: String!) {
+                    boards(ids: [$boardId]) {
+                        groups(ids: [$groupId]) {
+                            items_page(limit: ${pageSize}) {
+                                cursor
+                                items {
+                                    id
+                                    name
+                                    column_values {
+                                        id
+                                        value
+                                        text
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            `;
+
+            const variables = cursor ?
+                { boardId, groupId: String(groupId), cursor } :
+                { boardId, groupId: String(groupId) };
+
+            try {
+                const data = await this.makeRequest(query, variables);
+
+                if (!data.boards || data.boards.length === 0 ||
+                    !data.boards[0].groups || data.boards[0].groups.length === 0 ||
+                    !data.boards[0].groups[0].items_page) {
+                    break;
+                }
+
+                const itemsPage = data.boards[0].groups[0].items_page;
+                const pageItems = itemsPage.items || [];
+                allItems = allItems.concat(pageItems);
+
+                this.logger?.log(`Page ${page}: ${pageItems.length} items (Total: ${allItems.length})`);
+
+                if (!itemsPage.cursor || pageItems.length < pageSize || allItems.length >= limit) {
+                    break;
+                }
+
+                cursor = itemsPage.cursor;
+                page++;
+
+                if (page > 50) {
+                    this.logger?.log('Reached safety limit of 50 pages', 'warn');
+                    break;
+                }
+
+                await new Promise(resolve => setTimeout(resolve, 100));
+            } catch (error) {
+                this.logger?.log(`Error in paginated query page ${page}: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        this.logger?.log(`✅ Paginated query completed: ${allItems.length} total items`);
+        return allItems;
+    }
+
+    async createItem(boardId, groupId, itemName, columnValues) {
+        this.logger?.log(`Creating item: ${itemName}`);
+        const query = `
+            mutation CreateItem($boardId: ID!, $groupId: String!, $itemName: String!, $columnValues: JSON!) {
+                create_item(
+                    board_id: $boardId,
+                    group_id: $groupId,
+                    item_name: $itemName,
+                    column_values: $columnValues
+                ) {
+                    id
+                }
+            }
+        `;
+
+        const variables = {
+            boardId,
+            groupId: String(groupId),
+            itemName,
+            columnValues
+        };
+
+        try {
+            const data = await this.makeRequest(query, variables);
+            this.logger?.log(`✅ Item created successfully: ${data.create_item?.id}`);
+            return data.create_item;
+        } catch (error) {
+            this.logger?.log(`❌ Failed to create item: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    async updateItem(itemId, columnValues) {
+        this.logger?.log(`Updating item: ${itemId}`);
+        const query = `
+            mutation UpdateItem($itemId: ID!, $columnValues: JSON!) {
+                change_multiple_column_values(
+                    item_id: $itemId,
+                    column_values: $columnValues
+                ) {
+                    id
+                }
+            }
+        `;
+
+        const variables = {
+            itemId,
+            columnValues
+        };
+
+        try {
+            const data = await this.makeRequest(query, variables);
+            this.logger?.log(`✅ Item updated successfully: ${itemId}`);
+            return data.change_multiple_column_values;
+        } catch (error) {
+            this.logger?.log(`❌ Failed to update item: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    async deleteItem(itemId) {
+        this.logger?.log(`Deleting item: ${itemId}`);
+        const query = `
+            mutation DeleteItem($itemId: ID!) {
+                delete_item(item_id: $itemId) {
+                    id
+                }
+            }
+        `;
+
+        const variables = {
+            itemId
+        };
+
+        try {
+            const data = await this.makeRequest(query, variables);
+            this.logger?.log(`✅ Item deleted successfully: ${itemId}`);
+            return data.delete_item;
+        } catch (error) {
+            this.logger?.log(`❌ Failed to delete item: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    async testConnection() {
+        this.logger?.log('Testing Monday.com connection...');
+        try {
+            const user = await this.getCurrentUser();
+            this.logger?.log('✅ Connection test successful');
+            return { success: true, user };
+        } catch (error) {
+            this.logger?.log(`❌ Connection test failed: ${error.message}`, 'error');
+            return { success: false, error: error.message };
+        }
     }
 }
-
-// Global logger instance
-window.diagnosticLogger = new DiagnosticLogger();
-
-// Auto-show logger on errors
-window.addEventListener('error', (event) => {
-    window.diagnosticLogger.log(`Unhandled error: ${event.error?.message || event.message}`, 'error');
-    window.diagnosticLogger.showLogger();
-});
-
-window.addEventListener('unhandledrejection', (event) => {
-    window.diagnosticLogger.log(`Unhandled promise rejection: ${event.reason}`, 'error');
-    window.diagnosticLogger.showLogger();
-});

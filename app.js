@@ -10,12 +10,27 @@ class ClaimWebApp {
         this.lastEntryData = {};
         this.responsivenessCheck = null;
 
-        this.logger = window.diagnosticLogger;
+        // Wait for logger to be available
+        if (typeof window.diagnosticLogger !== 'undefined') {
+            this.logger = window.diagnosticLogger;
+        } else {
+            // Fallback console logger
+            this.logger = {
+                log: (msg, type = 'info') => console[type === 'error' ? 'error' : type === 'warn' ? 'warn' : 'log'](msg),
+                startTimer: () => ({ startTime: Date.now() }),
+                endTimer: (timer) => Date.now() - timer.startTime,
+                setProgress: () => { },
+                toggleLogger: () => { },
+                showLogger: () => { },
+                startResponsivenessCheck: () => setInterval(() => { }, 1000)
+            };
+        }
+
         this.initializeApp();
     }
 
     initializeApp() {
-        this.logger.log('🚀 Initializing ClaimWebApp...');
+        this.safeLog('🚀 Initializing ClaimWebApp...');
         this.updateStatus('Initializing');
 
         try {
@@ -23,54 +38,100 @@ class ClaimWebApp {
             this.loadStoredApiKey();
             this.renderCalendarView();
             this.startResponsivenessCheck();
-            this.logger.log('✅ App initialized successfully');
+            this.safeLog('✅ App initialized successfully');
             this.updateStatus('Ready');
         } catch (error) {
-            this.logger.log(`❌ App initialization failed: ${error.message}`, 'error');
+            this.safeLog(`❌ App initialization failed: ${error.message}`, 'error');
             this.updateStatus('Error', 'error');
+            this.hideLoading();
+        }
+    }
+
+    // Safe logging method to prevent errors
+    safeLog(message, type = 'info') {
+        try {
+            if (this.logger && this.logger.log) {
+                this.logger.log(message, type);
+            } else {
+                console.log(`[${type}] ${message}`);
+            }
+        } catch (e) {
+            console.log(`[${type}] ${message}`);
         }
     }
 
     bindEvents() {
-        this.logger.log('Binding events...');
+        this.safeLog('Binding events...');
 
-        document.getElementById('saveApiKey').addEventListener('click', () => this.saveApiKey());
-        document.getElementById('apiKey').addEventListener('keypress', (e) => {
+        // API Key events
+        const saveApiKeyBtn = document.getElementById('saveApiKey');
+        const apiKeyInput = document.getElementById('apiKey');
+
+        if (saveApiKeyBtn) saveApiKeyBtn.addEventListener('click', () => this.saveApiKey());
+        if (apiKeyInput) apiKeyInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.saveApiKey();
         });
 
-        document.getElementById('prevWeek').addEventListener('click', () => this.previousWeek());
-        document.getElementById('nextWeek').addEventListener('click', () => this.nextWeek());
-        document.getElementById('weekPicker').addEventListener('change', (e) => this.selectWeek(e.target.value));
-        document.getElementById('queryData').addEventListener('click', () => this.loadData());
+        // Navigation events
+        const prevWeekBtn = document.getElementById('prevWeek');
+        const nextWeekBtn = document.getElementById('nextWeek');
+        const weekPicker = document.getElementById('weekPicker');
+        const queryDataBtn = document.getElementById('queryData');
 
-        document.getElementById('toggleDebug').addEventListener('click', () => this.toggleDebug());
-        document.getElementById('forceLoad').addEventListener('click', () => this.forceLoad());
-        document.getElementById('testConnection').addEventListener('click', () => this.testConnection());
+        if (prevWeekBtn) prevWeekBtn.addEventListener('click', () => this.previousWeek());
+        if (nextWeekBtn) nextWeekBtn.addEventListener('click', () => this.nextWeek());
+        if (weekPicker) weekPicker.addEventListener('change', (e) => this.selectWeek(e.target.value));
+        if (queryDataBtn) queryDataBtn.addEventListener('click', () => this.loadData());
 
-        document.querySelector('.close-modal').addEventListener('click', () => this.closeModal());
-        document.getElementById('cancelEntry').addEventListener('click', () => this.closeModal());
-        document.getElementById('saveEntry').addEventListener('click', () => this.saveEntry());
-        document.getElementById('updateEntry').addEventListener('click', () => this.updateEntry());
-        document.getElementById('addAnother').addEventListener('click', () => this.saveEntry(true));
+        // Debug events
+        const toggleDebugBtn = document.getElementById('toggleDebug');
+        const forceLoadBtn = document.getElementById('forceLoad');
+        const testConnectionBtn = document.getElementById('testConnection');
 
-        document.getElementById('addMultipleEntries').addEventListener('click', () => this.openMultiEntryModal());
-        document.getElementById('clearAll').addEventListener('click', () => this.clearAllEntries());
+        if (toggleDebugBtn) toggleDebugBtn.addEventListener('click', () => this.toggleDebug());
+        if (forceLoadBtn) forceLoadBtn.addEventListener('click', () => this.forceLoad());
+        if (testConnectionBtn) testConnectionBtn.addEventListener('click', () => this.testConnection());
 
+        // Modal events
+        const closeModalBtn = document.querySelector('.close-modal');
+        const cancelEntryBtn = document.getElementById('cancelEntry');
+        const saveEntryBtn = document.getElementById('saveEntry');
+        const updateEntryBtn = document.getElementById('updateEntry');
+        const addAnotherBtn = document.getElementById('addAnother');
+
+        if (closeModalBtn) closeModalBtn.addEventListener('click', () => this.closeModal());
+        if (cancelEntryBtn) cancelEntryBtn.addEventListener('click', () => this.closeModal());
+        if (saveEntryBtn) saveEntryBtn.addEventListener('click', () => this.saveEntry());
+        if (updateEntryBtn) updateEntryBtn.addEventListener('click', () => this.updateEntry());
+        if (addAnotherBtn) addAnotherBtn.addEventListener('click', () => this.saveEntry(true));
+
+        // Bulk actions
+        const addMultipleBtn = document.getElementById('addMultipleEntries');
+        const clearAllBtn = document.getElementById('clearAll');
+
+        if (addMultipleBtn) addMultipleBtn.addEventListener('click', () => this.openMultiEntryModal());
+        if (clearAllBtn) clearAllBtn.addEventListener('click', () => this.clearAllEntries());
+
+        // Activity type selection
         document.querySelectorAll('.activity-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 const value = e.target.getAttribute('data-value');
-                document.getElementById('activityType').value = value;
+                const activityTypeSelect = document.getElementById('activityType');
+                if (activityTypeSelect) activityTypeSelect.value = value;
             });
         });
 
-        document.getElementById('entryModal').addEventListener('click', (e) => {
-            if (e.target.id === 'entryModal') {
-                this.closeModal();
-            }
-        });
+        // Modal backdrop click
+        const entryModal = document.getElementById('entryModal');
+        if (entryModal) {
+            entryModal.addEventListener('click', (e) => {
+                if (e.target.id === 'entryModal') {
+                    this.closeModal();
+                }
+            });
+        }
 
-        this.logger.log('✅ All events bound successfully');
+        this.safeLog('✅ All events bound successfully');
     }
 
     updateStatus(status, type = 'ready') {
@@ -82,38 +143,45 @@ class ClaimWebApp {
     }
 
     startResponsivenessCheck() {
-        this.logger.log('Starting responsiveness check...');
-        this.responsivenessCheck = this.logger.startResponsivenessCheck();
+        this.safeLog('Starting responsiveness check...');
+        if (this.logger && this.logger.startResponsivenessCheck) {
+            this.responsivenessCheck = this.logger.startResponsivenessCheck();
+        }
     }
 
     async testConnection() {
-        this.logger.log('Testing Monday.com connection...');
+        this.safeLog('Testing Monday.com connection...');
         this.updateStatus('Testing Connection', 'loading');
+        this.showLoading('Testing connection...');
 
         try {
             const result = await this.mondayClient.testConnection();
             if (result.success) {
-                this.logger.log('✅ Connection test successful');
+                this.safeLog('✅ Connection test successful');
                 this.showNotification('Connection test successful!', 'success');
                 this.updateStatus('Ready');
             } else {
-                this.logger.log(`❌ Connection test failed: ${result.error}`, 'error');
+                this.safeLog(`❌ Connection test failed: ${result.error}`, 'error');
                 this.showNotification(`Connection failed: ${result.error}`, 'error');
                 this.updateStatus('Connection Failed', 'error');
             }
         } catch (error) {
-            this.logger.log(`❌ Connection test error: ${error.message}`, 'error');
+            this.safeLog(`❌ Connection test error: ${error.message}`, 'error');
             this.showNotification(`Connection error: ${error.message}`, 'error');
             this.updateStatus('Connection Error', 'error');
+        } finally {
+            this.hideLoading();
         }
     }
 
     toggleDebug() {
-        this.logger.toggleLogger();
+        if (this.logger && this.logger.toggleLogger) {
+            this.logger.toggleLogger();
+        }
     }
 
     forceLoad() {
-        this.logger.log('Force loading data...');
+        this.safeLog('Force loading data...');
         this.loadData();
     }
 
@@ -161,18 +229,20 @@ class ClaimWebApp {
     }
 
     renderCalendarView() {
-        this.logger.log('Rendering calendar view...');
+        this.safeLog('Rendering calendar view...');
         const calendarGrid = document.getElementById('calendarGrid');
         if (!calendarGrid) {
-            this.logger.log('❌ Calendar grid element not found', 'error');
+            this.safeLog('❌ Calendar grid element not found', 'error');
             return;
         }
 
         const weekDates = this.getWeekDates(this.currentWeekStart);
 
-        document.getElementById('weekPicker').value = this.formatDate(this.currentWeekStart);
-        document.getElementById('weekRange').textContent =
-            `${this.formatShortDate(weekDates[0])} - ${this.formatShortDate(weekDates[6])}`;
+        const weekPicker = document.getElementById('weekPicker');
+        const weekRange = document.getElementById('weekRange');
+
+        if (weekPicker) weekPicker.value = this.formatDate(this.currentWeekStart);
+        if (weekRange) weekRange.textContent = `${this.formatShortDate(weekDates[0])} - ${this.formatShortDate(weekDates[6])}`;
 
         let html = '';
 
@@ -182,7 +252,7 @@ class ClaimWebApp {
             const dayTotalHours = dayEntries.reduce((sum, entry) => sum + parseFloat(entry.hours || 0), 0);
             const isWeekend = this.isWeekend(date);
 
-            this.logger.log(`Rendering date ${dateStr}: ${dayEntries.length} entries, weekend: ${isWeekend}`);
+            this.safeLog(`Rendering date ${dateStr}: ${dayEntries.length} entries, weekend: ${isWeekend}`);
 
             html += `
                 <div class="calendar-day ${isWeekend ? 'weekend-day' : ''}" data-date="${dateStr}">
@@ -216,17 +286,30 @@ class ClaimWebApp {
 
         calendarGrid.innerHTML = html;
 
+        // Bind events to dynamically created elements
+        this.bindDynamicEvents();
+        this.updateWeekSummary();
+        this.safeLog('✅ Calendar view rendered');
+    }
+
+    bindDynamicEvents() {
         document.querySelectorAll('.edit-entry').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                const entryId = e.target.closest('.entry-item').getAttribute('data-entry-id');
-                this.editEntry(entryId);
+                const entryItem = e.target.closest('.entry-item');
+                if (entryItem) {
+                    const entryId = entryItem.getAttribute('data-entry-id');
+                    this.editEntry(entryId);
+                }
             });
         });
 
         document.querySelectorAll('.delete-entry').forEach(btn => {
             btn.addEventListener('click', (e) => {
-                const entryId = e.target.closest('.entry-item').getAttribute('data-entry-id');
-                this.deleteEntry(entryId);
+                const entryItem = e.target.closest('.entry-item');
+                if (entryItem) {
+                    const entryId = entryItem.getAttribute('data-entry-id');
+                    this.deleteEntry(entryId);
+                }
             });
         });
 
@@ -236,9 +319,6 @@ class ClaimWebApp {
                 this.openEntryModal(date);
             });
         });
-
-        this.updateWeekSummary();
-        this.logger.log('✅ Calendar view rendered');
     }
 
     renderEntryItem(entry) {
@@ -296,8 +376,11 @@ class ClaimWebApp {
             });
         });
 
-        document.getElementById('weekTotalHours').textContent = totalHours.toFixed(1);
-        document.getElementById('weekTotalEntries').textContent = totalEntries;
+        const weekTotalHours = document.getElementById('weekTotalHours');
+        const weekTotalEntries = document.getElementById('weekTotalEntries');
+
+        if (weekTotalHours) weekTotalHours.textContent = totalHours.toFixed(1);
+        if (weekTotalEntries) weekTotalEntries.textContent = totalEntries;
     }
 
     openEntryModal(date) {
@@ -309,16 +392,20 @@ class ClaimWebApp {
         const modalDate = document.getElementById('modalDate');
         const modalTitle = document.getElementById('modalTitle');
 
-        modalDate.textContent = this.formatDisplayDate(new Date(date));
-        modalTitle.textContent = 'Add Entry for';
+        if (modalDate) modalDate.textContent = this.formatDisplayDate(new Date(date));
+        if (modalTitle) modalTitle.textContent = 'Add Entry for';
 
-        document.getElementById('saveEntry').style.display = 'block';
-        document.getElementById('updateEntry').style.display = 'none';
-        document.getElementById('addAnother').style.display = 'block';
+        const saveEntryBtn = document.getElementById('saveEntry');
+        const updateEntryBtn = document.getElementById('updateEntry');
+        const addAnotherBtn = document.getElementById('addAnother');
+
+        if (saveEntryBtn) saveEntryBtn.style.display = 'block';
+        if (updateEntryBtn) updateEntryBtn.style.display = 'none';
+        if (addAnotherBtn) addAnotherBtn.style.display = 'block';
 
         this.fillFormWithData(this.lastEntryData);
 
-        modal.style.display = 'block';
+        if (modal) modal.style.display = 'block';
     }
 
     editEntry(entryId) {
@@ -347,32 +434,45 @@ class ClaimWebApp {
         const modalDate = document.getElementById('modalDate');
         const modalTitle = document.getElementById('modalTitle');
 
-        modalDate.textContent = this.formatDisplayDate(new Date(foundDate));
-        modalTitle.textContent = 'Edit Entry for';
+        if (modalDate) modalDate.textContent = this.formatDisplayDate(new Date(foundDate));
+        if (modalTitle) modalTitle.textContent = 'Edit Entry for';
 
-        document.getElementById('saveEntry').style.display = 'none';
-        document.getElementById('updateEntry').style.display = 'block';
-        document.getElementById('addAnother').style.display = 'none';
+        const saveEntryBtn = document.getElementById('saveEntry');
+        const updateEntryBtn = document.getElementById('updateEntry');
+        const addAnotherBtn = document.getElementById('addAnother');
+
+        if (saveEntryBtn) saveEntryBtn.style.display = 'none';
+        if (updateEntryBtn) updateEntryBtn.style.display = 'block';
+        if (addAnotherBtn) addAnotherBtn.style.display = 'none';
 
         this.fillFormWithData(foundEntry);
 
-        modal.style.display = 'block';
+        if (modal) modal.style.display = 'block';
     }
 
     fillFormWithData(data) {
-        document.getElementById('activityType').value = data.activityType || '1';
-        document.getElementById('customer').value = data.customer || '';
-        document.getElementById('workItem').value = data.workItem || '';
-        document.getElementById('comment').value = data.comment || '';
-        document.getElementById('hours').value = data.hours || '8';
+        const activityType = document.getElementById('activityType');
+        const customer = document.getElementById('customer');
+        const workItem = document.getElementById('workItem');
+        const comment = document.getElementById('comment');
+        const hours = document.getElementById('hours');
+
+        if (activityType) activityType.value = data.activityType || '1';
+        if (customer) customer.value = data.customer || '';
+        if (workItem) workItem.value = data.workItem || '';
+        if (comment) comment.value = data.comment || '';
+        if (hours) hours.value = data.hours || '8';
     }
 
     async deleteEntry(entryId) {
         let entryToDelete = null;
+        let entryDate = null;
+
         for (const [date, entries] of this.entries.entries()) {
             const entry = entries.find(e => e.id === entryId);
             if (entry) {
                 entryToDelete = entry;
+                entryDate = date;
                 break;
             }
         }
@@ -399,17 +499,26 @@ class ClaimWebApp {
         try {
             await this.mondayClient.deleteItem(entryId);
             this.showNotification('Entry deleted successfully!', 'success');
-            await this.loadData();
+
+            // Remove from local entries
+            if (entryDate) {
+                const dayEntries = this.entries.get(entryDate) || [];
+                const updatedEntries = dayEntries.filter(entry => entry.id !== entryId);
+                this.entries.set(entryDate, updatedEntries);
+            }
+
+            this.renderCalendarView();
         } catch (error) {
             this.showNotification(`Failed to delete entry: ${error.message}`, 'error');
-            this.logger.log(`Delete entry failed: ${error.message}`, 'error');
+            this.safeLog(`Delete entry failed: ${error.message}`, 'error');
         } finally {
             this.hideLoading();
         }
     }
 
     closeModal() {
-        document.getElementById('entryModal').style.display = 'none';
+        const modal = document.getElementById('entryModal');
+        if (modal) modal.style.display = 'none';
         this.currentEditingDate = null;
         this.currentEditingEntry = null;
         this.isEditing = false;
@@ -417,18 +526,29 @@ class ClaimWebApp {
 
     async saveEntry(addAnother = false) {
         const form = document.getElementById('entryForm');
-        if (!form.checkValidity()) {
-            form.reportValidity();
+        if (!form || !form.checkValidity()) {
+            if (form) form.reportValidity();
+            return;
+        }
+
+        const activityType = document.getElementById('activityType');
+        const customer = document.getElementById('customer');
+        const workItem = document.getElementById('workItem');
+        const comment = document.getElementById('comment');
+        const hours = document.getElementById('hours');
+
+        if (!activityType || !customer || !workItem || !hours) {
+            this.showNotification('Form elements not found', 'error');
             return;
         }
 
         const entry = {
             date: this.currentEditingDate,
-            activityType: document.getElementById('activityType').value,
-            customer: document.getElementById('customer').value.trim(),
-            workItem: document.getElementById('workItem').value.trim(),
-            comment: document.getElementById('comment').value.trim(),
-            hours: document.getElementById('hours').value
+            activityType: activityType.value,
+            customer: customer.value.trim(),
+            workItem: workItem.value.trim(),
+            comment: comment.value.trim(),
+            hours: hours.value
         };
 
         this.lastEntryData = { ...entry };
@@ -470,14 +590,15 @@ class ClaimWebApp {
             this.showNotification('Entry saved successfully!', 'success');
 
             if (addAnother) {
-                document.getElementById('customer').focus();
+                const customerInput = document.getElementById('customer');
+                if (customerInput) customerInput.focus();
             } else {
                 this.closeModal();
                 await this.loadData();
             }
         } catch (error) {
             this.showNotification(`Failed to save entry: ${error.message}`, 'error');
-            this.logger.log(`Save entry failed: ${error.message}`, 'error');
+            this.safeLog(`Save entry failed: ${error.message}`, 'error');
         } finally {
             this.hideLoading();
         }
@@ -485,8 +606,8 @@ class ClaimWebApp {
 
     async updateEntry() {
         const form = document.getElementById('entryForm');
-        if (!form.checkValidity()) {
-            form.reportValidity();
+        if (!form || !form.checkValidity()) {
+            if (form) form.reportValidity();
             return;
         }
 
@@ -495,13 +616,24 @@ class ClaimWebApp {
             return;
         }
 
+        const activityType = document.getElementById('activityType');
+        const customer = document.getElementById('customer');
+        const workItem = document.getElementById('workItem');
+        const comment = document.getElementById('comment');
+        const hours = document.getElementById('hours');
+
+        if (!activityType || !customer || !workItem || !hours) {
+            this.showNotification('Form elements not found', 'error');
+            return;
+        }
+
         const updatedEntry = {
             id: this.currentEditingEntry.id,
-            activityType: document.getElementById('activityType').value,
-            customer: document.getElementById('customer').value.trim(),
-            workItem: document.getElementById('workItem').value.trim(),
-            comment: document.getElementById('comment').value.trim(),
-            hours: document.getElementById('hours').value
+            activityType: activityType.value,
+            customer: customer.value.trim(),
+            workItem: workItem.value.trim(),
+            comment: comment.value.trim(),
+            hours: hours.value
         };
 
         this.showLoading('Updating entry...');
@@ -528,7 +660,7 @@ class ClaimWebApp {
             await this.loadData();
         } catch (error) {
             this.showNotification(`Failed to update entry: ${error.message}`, 'error');
-            this.logger.log(`Update entry failed: ${error.message}`, 'error');
+            this.safeLog(`Update entry failed: ${error.message}`, 'error');
         } finally {
             this.hideLoading();
         }
@@ -543,14 +675,18 @@ class ClaimWebApp {
 
     clearAllEntries() {
         if (confirm('Are you sure you want to clear all unsaved entries from the form?')) {
-            document.getElementById('entryForm').reset();
+            const form = document.getElementById('entryForm');
+            if (form) form.reset();
             this.lastEntryData = {};
             this.showNotification('Form cleared', 'success');
         }
     }
 
     async saveApiKey() {
-        const apiKey = document.getElementById('apiKey').value.trim();
+        const apiKeyInput = document.getElementById('apiKey');
+        if (!apiKeyInput) return;
+
+        const apiKey = apiKeyInput.value.trim();
         if (!apiKey) {
             this.showNotification('Please enter an API key', 'error');
             return;
@@ -565,15 +701,20 @@ class ClaimWebApp {
             localStorage.setItem('mondayApiKey', apiKey);
             this.showNotification('API key saved and validated successfully!', 'success');
 
-            document.getElementById('userInfo').style.display = 'block';
-            document.getElementById('userName').textContent = `User: ${this.user.name}`;
-            document.getElementById('userEmail').textContent = `Email: ${this.user.email}`;
-            document.getElementById('currentYear').textContent = `Year: ${new Date().getFullYear()}`;
+            const userInfo = document.getElementById('userInfo');
+            const userName = document.getElementById('userName');
+            const userEmail = document.getElementById('userEmail');
+            const currentYear = document.getElementById('currentYear');
+
+            if (userInfo) userInfo.style.display = 'block';
+            if (userName) userName.textContent = `User: ${this.user.name}`;
+            if (userEmail) userEmail.textContent = `Email: ${this.user.email}`;
+            if (currentYear) currentYear.textContent = `Year: ${new Date().getFullYear()}`;
 
             await this.loadData();
         } catch (error) {
             this.showNotification(`Failed to validate API key: ${error.message}`, 'error');
-            this.logger.log(`API Key validation failed: ${error.message}`, 'error');
+            this.safeLog(`API Key validation failed: ${error.message}`, 'error');
         } finally {
             this.hideLoading();
         }
@@ -581,58 +722,49 @@ class ClaimWebApp {
 
     loadStoredApiKey() {
         const storedKey = localStorage.getItem('mondayApiKey');
-        if (storedKey) {
-            document.getElementById('apiKey').value = storedKey;
-            setTimeout(() => this.saveApiKey(), 1000);
+        const apiKeyInput = document.getElementById('apiKey');
+        if (storedKey && apiKeyInput) {
+            apiKeyInput.value = storedKey;
         }
     }
 
     async loadData() {
+        this.safeLog('Starting loadData...');
+
         if (!this.user) {
-            this.logger.log('No user found - cannot load data', 'warn');
+            this.safeLog('No user found - cannot load data', 'warn');
             this.showNotification('Please save your API key first', 'warning');
+            this.hideLoading();
             return;
         }
 
-        const loadTimer = this.logger.startTimer('loadData');
         this.updateStatus('Loading Data', 'loading');
-
         this.showLoading('Loading weekly entries...', 'Initializing data fetch...');
-        this.logger.setProgress(0, 100, 'Starting data load');
 
         try {
             const currentYear = new Date().getFullYear().toString();
-            this.logger.log(`Loading data for year: ${currentYear} and user: ${this.user.name} (ID: ${this.user.id})`);
+            this.safeLog(`Loading data for year: ${currentYear} and user: ${this.user.name} (ID: ${this.user.id})`);
             this.updateLoadingDetails('Getting board information...');
-            this.logger.setProgress(10, 100, 'Fetching board data');
 
             const board = await this.mondayClient.getBoardWithGroups('6500270039');
             this.updateLoadingDetails('Processing board structure...');
-            this.logger.setProgress(20, 100, 'Processing board');
 
             if (!board || !board.groups) {
-                this.logger.log('No board data found', 'error');
-                this.showNotification('No board data found', 'error');
-                this.updateStatus('Error', 'error');
-                return;
+                throw new Error('No board data found');
             }
 
             const groupId = this.getYearGroupId(board, currentYear);
-            this.logger.log(`Using group ID: ${groupId}`);
+            this.safeLog(`Using group ID: ${groupId}`);
             this.updateLoadingDetails(`Target group: ${groupId}`);
-            this.logger.setProgress(30, 100, 'Identified target group');
 
             if (!groupId) {
-                this.logger.log(`Could not find group for year ${currentYear}`, 'warn');
-                this.showNotification(`Could not find group for year ${currentYear}`, 'warning');
-                this.updateStatus('Ready');
-                return;
+                throw new Error(`Could not find group for year ${currentYear}`);
             }
 
             let items = [];
             this.updateLoadingDetails('Querying items from Monday.com...');
-            this.logger.setProgress(40, 100, 'Querying items');
 
+            // Try different query methods
             const queryMethods = [
                 {
                     name: 'simple',
@@ -647,69 +779,60 @@ class ClaimWebApp {
             for (const method of queryMethods) {
                 try {
                     this.updateLoadingDetails(`Trying ${method.name} query method...`);
-                    this.logger.setProgress(50, 100, `Trying ${method.name} query`);
-                    this.logger.log(`🔍 Attempting ${method.name} query...`);
+                    this.safeLog(`🔍 Attempting ${method.name} query...`);
                     items = await method.method();
 
                     if (items.length > 0) {
-                        this.logger.log(`✅ ${method.name} query successful: ${items.length} items found`);
+                        this.safeLog(`✅ ${method.name} query successful: ${items.length} items found`);
                         break;
                     } else {
-                        this.logger.log(`⚠️ ${method.name} query returned 0 items`, 'warn');
+                        this.safeLog(`⚠️ ${method.name} query returned 0 items`, 'warn');
                     }
                 } catch (error) {
-                    this.logger.log(`❌ ${method.name} query failed: ${error.message}`, 'warn');
+                    this.safeLog(`❌ ${method.name} query failed: ${error.message}`, 'warn');
                 }
             }
 
-            this.logger.log(`📊 Final item count from all queries: ${items.length}`);
+            this.safeLog(`📊 Final item count from all queries: ${items.length}`);
 
             if (items.length === 0) {
-                this.logger.log('❌ No items found in any query method', 'error');
                 this.showNotification('No items found in Monday.com board. Please check if the board has items in the current year group.', 'warning');
                 this.updateStatus('Ready');
                 return;
             }
 
             this.updateLoadingDetails(`Processing ${items.length} items...`);
-            this.logger.setProgress(70, 100, 'Processing items');
-
             this.processItemsWithDebug(items);
 
             this.updateLoadingDetails('Rendering calendar view...');
-            this.logger.setProgress(90, 100, 'Rendering UI');
             this.renderCalendarView();
 
-            const duration = this.logger.endTimer(loadTimer);
-            this.logger.setProgress(100, 100, 'Complete');
-            this.logger.log(`✅ Data load completed in ${duration.toFixed(0)}ms - Found entries for ${this.entries.size} dates`);
+            this.safeLog(`✅ Data load completed - Found entries for ${this.entries.size} dates`);
             this.showNotification(`Loaded ${items.length} entries for ${this.entries.size} days`, 'success');
             this.updateStatus('Ready');
 
         } catch (error) {
-            this.logger.log(`❌ Data loading failed: ${error.message}`, 'error');
+            this.safeLog(`❌ Data loading failed: ${error.message}`, 'error');
             this.showNotification(`Failed to load data: ${error.message}`, 'error');
             this.updateStatus('Error', 'error');
         } finally {
+            // Always hide loading overlay
             this.hideLoading();
-            setTimeout(() => this.logger.setProgress(0, 100, 'Ready'), 2000);
         }
     }
 
     processItemsWithDebug(items) {
-        const processTimer = this.logger.startTimer('processItems');
         this.entries.clear();
-        this.logger.log(`🔍 DEBUG: Starting to process ${items.length} items`);
+        this.safeLog(`🔍 DEBUG: Starting to process ${items.length} items`);
 
         const currentWeekDates = this.getWeekDates(this.currentWeekStart).map(date => this.formatDate(date));
-        this.logger.log(`📅 Current week dates being checked: ${currentWeekDates.join(', ')}`);
+        this.safeLog(`📅 Current week dates being checked: ${currentWeekDates.join(', ')}`);
 
         let userMatchCount = 0;
         let dateExtractedCount = 0;
         let currentWeekEntries = 0;
-        let userMismatchReasons = [];
 
-        this.logger.log(`👤 Looking for items assigned to user: ${this.user.name} (ID: ${this.user.id})`);
+        this.safeLog(`👤 Looking for items assigned to user: ${this.user.name} (ID: ${this.user.id})`);
 
         items.forEach((item, index) => {
             const userCheck = this.debugIsUserItem(item);
@@ -735,56 +858,13 @@ class ClaimWebApp {
                             hours: this.extractColumnValue(item, 'numbers__1')
                         };
 
-                        this.logger.log(`✅ ADDED: ${date} - ${entryData.customer} (${entryData.hours}h)`, 'debug');
                         this.entries.get(date).push(entryData);
-                    } else {
-                        this.logger.log(`❌ DATE OUTSIDE WEEK: ${date} for item "${item.name}"`, 'debug');
                     }
-                } else {
-                    this.logger.log(`❌ NO DATE: Could not extract date for item "${item.name}"`, 'debug');
-                    if (item.column_values && item.column_values.length > 0) {
-                        const dateColumns = item.column_values.filter(col =>
-                            col.id === 'date4' || col.id === 'date'
-                        );
-                        if (dateColumns.length > 0) {
-                            this.logger.log(`   📅 DATE COLUMNS FOR ITEM "${item.name}":`, 'debug');
-                            dateColumns.forEach(col => {
-                                this.logger.log(`     ${col.id}: value="${col.value}", text="${col.text}"`, 'debug');
-                            });
-                        }
-                    }
-                }
-            } else {
-                userMismatchReasons.push(userCheck.reason);
-                if (userMismatchReasons.length <= 3) {
-                    this.logger.log(`❌ USER MISMATCH: ${userCheck.reason}`, 'debug');
                 }
             }
         });
 
-        this.logger.log(`📊 PROCESSING SUMMARY:`);
-        this.logger.log(`   Total items: ${items.length}`);
-        this.logger.log(`   User matches: ${userMatchCount}`);
-        this.logger.log(`   Items with dates: ${dateExtractedCount}`);
-        this.logger.log(`   Current week entries: ${currentWeekEntries}`);
-
-        if (userMismatchReasons.length > 0 && userMismatchReasons.length <= 10) {
-            const uniqueReasons = [...new Set(userMismatchReasons)];
-            this.logger.log(`   User mismatch reasons (first 10): ${uniqueReasons.slice(0, 10).join(', ')}`);
-        } else if (userMismatchReasons.length > 10) {
-            this.logger.log(`   User mismatch reasons: ${userMismatchReasons.length} total mismatches`);
-        }
-
-        this.logger.log(`📅 FINAL ENTRIES BY DATE:`);
-        currentWeekDates.forEach(date => {
-            const entries = this.entries.get(date) || [];
-            this.logger.log(`   ${date}: ${entries.length} entries`);
-            if (entries.length === 0) {
-                this.logger.log(`   ⚠️  NO ENTRIES for ${date}`, 'warn');
-            }
-        });
-
-        this.logger.endTimer(processTimer);
+        this.safeLog(`📊 PROCESSING SUMMARY: ${userMatchCount} user matches, ${dateExtractedCount} with dates, ${currentWeekEntries} current week entries`);
     }
 
     debugIsUserItem(item) {
@@ -792,45 +872,32 @@ class ClaimWebApp {
             return { isMatch: false, reason: 'No user' };
         }
 
+        // Check if item name contains user name
         if (item.name && item.name.includes(this.user.name)) {
             return { isMatch: true, reason: 'Name match' };
         }
 
+        // Check person column
         if (item.column_values) {
             for (const col of item.column_values) {
                 if (col.id === 'person') {
-                    this.logger.log(`🔍 Checking person column for item "${item.name}":`, 'debug');
-                    this.logger.log(`   Column value: ${col.value}`, 'debug');
-                    this.logger.log(`   Column text: ${col.text}`, 'debug');
-
                     if (col.value && col.value !== 'null' && col.value !== '""') {
                         try {
                             const personData = JSON.parse(col.value);
-                            this.logger.log(`   Parsed person data: ${JSON.stringify(personData)}`, 'debug');
-
                             if (personData.personsAndTeams && Array.isArray(personData.personsAndTeams)) {
-                                const isUser = personData.personsAndTeams.some(person => {
-                                    const match = person.id === this.user.id;
-                                    if (match) {
-                                        this.logger.log(`   ✅ Matched by person ID: ${person.id} === ${this.user.id}`, 'debug');
-                                    }
-                                    return match;
-                                });
+                                const isUser = personData.personsAndTeams.some(person =>
+                                    person.id === this.user.id
+                                );
                                 if (isUser) return { isMatch: true, reason: 'Person ID match' };
                             }
                         } catch (e) {
-                            this.logger.log(`   Failed to parse person JSON: ${e.message}`, 'debug');
+                            // Continue to next check
                         }
                     }
 
-                    if (col.text && col.text !== 'null' && col.text !== '""') {
-                        if (col.text.includes(this.user.name) || col.text.includes(this.user.email)) {
-                            this.logger.log(`   ✅ Matched by person text: ${col.text}`, 'debug');
-                            return { isMatch: true, reason: 'Person text match' };
-                        }
+                    if (col.text && (col.text.includes(this.user.name) || col.text.includes(this.user.email))) {
+                        return { isMatch: true, reason: 'Person text match' };
                     }
-
-                    this.logger.log(`   ❌ Person column exists but no match found`, 'debug');
                 }
             }
         }
@@ -846,95 +913,59 @@ class ClaimWebApp {
         if (detailsElement) {
             detailsElement.textContent = details;
         }
-        this.logger.log(`Loading: ${details}`, 'debug');
     }
 
     getYearGroupId(board, year) {
         if (!board || !board.groups) {
-            this.logger.log('No groups found in board', 'warn');
             return null;
         }
 
-        this.logger.log(`🔍 Looking for group for year: ${year}`);
-        this.logger.log(`   Available groups: ${board.groups.map(g => `${g.title} (${g.id})`).join(', ')}`);
-
+        // Look for exact year match
         let group = board.groups.find(g => g.title === year);
-        if (group) {
-            this.logger.log(`✅ Found exact year match: ${group.title} (${group.id})`);
-            return group.id;
-        }
+        if (group) return group.id;
 
+        // Look for current year
         const currentYear = new Date().getFullYear().toString();
         group = board.groups.find(g => g.title === currentYear);
-        if (group) {
-            this.logger.log(`✅ Found current year match: ${group.title} (${group.id})`);
-            return group.id;
-        }
+        if (group) return group.id;
 
+        // Look for partial match
         group = board.groups.find(g => g.title.includes(year));
-        if (group) {
-            this.logger.log(`✅ Found partial year match: ${group.title} (${group.id})`);
-            return group.id;
-        }
+        if (group) return group.id;
 
+        // Use first group as fallback
         if (board.groups.length > 0) {
-            this.logger.log(`⚠️ Using first group as fallback: ${board.groups[0].title} (${board.groups[0].id})`);
             return board.groups[0].id;
         }
 
-        this.logger.log('❌ No suitable group found');
         return null;
     }
 
-    processItems(items) {
-        this.processItemsWithDebug(items);
-    }
-
-    isUserItem(item) {
-        const debugResult = this.debugIsUserItem(item);
-        return debugResult.isMatch;
-    }
-
     extractItemDate(item) {
-        if (!item.column_values) {
-            this.logger.log('No column values found for item', 'debug');
-            return null;
-        }
+        if (!item.column_values) return null;
 
         for (const col of item.column_values) {
             if (col.id === 'date4') {
-                this.logger.log(`🔍 Checking date4 column for item "${item.name}": value="${col.value}", text="${col.text}"`, 'debug');
-
                 if (col.value && col.value !== 'null' && col.value !== '""') {
                     try {
                         const value = JSON.parse(col.value);
-                        this.logger.log(`   Parsed date value: ${JSON.stringify(value)}`, 'debug');
-
                         if (value && value.date) {
-                            const dateStr = value.date.split('T')[0];
-                            this.logger.log(`✅ Extracted date from JSON value: ${dateStr}`);
-                            return dateStr;
+                            return value.date.split('T')[0];
                         }
                     } catch (e) {
-                        this.logger.log(`   Failed to parse date JSON: ${e.message}`, 'debug');
+                        // Continue to text check
                     }
                 }
 
                 if (col.text && col.text !== 'null' && col.text !== '""') {
                     const dateStr = col.text.split('T')[0];
                     if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                        this.logger.log(`✅ Extracted date from text field: ${dateStr}`);
                         return dateStr;
-                    } else {
-                        this.logger.log(`   Invalid date format in text: ${dateStr}`, 'debug');
                     }
                 }
-
-                this.logger.log(`❌ Could not extract date from date4 column`);
             }
         }
 
-        this.logger.log(`❌ No date4 column found or no valid date value`);
         return null;
     }
 
@@ -943,34 +974,21 @@ class ClaimWebApp {
 
         for (const col of item.column_values) {
             if (col.id === columnId) {
-                this.logger.log(`Found column ${columnId}: value="${col.value}", text="${col.text}"`, 'debug');
-
                 if (col.text && col.text !== 'null' && col.text !== '""') {
-                    this.logger.log(`✅ Using text value for ${columnId}: ${col.text}`);
                     return col.text;
                 }
                 if (col.value && col.value !== 'null' && col.value !== '""') {
                     try {
                         const value = JSON.parse(col.value);
-                        this.logger.log(`Parsed JSON value for ${columnId}: ${JSON.stringify(value)}`, 'debug');
-
-                        if (typeof value === 'string') {
-                            this.logger.log(`✅ Using string value for ${columnId}: ${value}`);
-                            return value;
-                        }
-                        if (value && value.text) {
-                            this.logger.log(`✅ Using value.text for ${columnId}: ${value.text}`);
-                            return value.text;
-                        }
+                        if (typeof value === 'string') return value;
+                        if (value && value.text) return value.text;
                     } catch (e) {
-                        this.logger.log(`✅ Using raw value for ${columnId}: ${col.value}`);
                         return col.value;
                     }
                 }
             }
         }
 
-        this.logger.log(`❌ Column ${columnId} not found or empty`);
         return '';
     }
 
@@ -989,6 +1007,7 @@ class ClaimWebApp {
                         return value.index;
                     }
                 } catch (e) {
+                    // Fallback to text parsing if JSON parsing fails
                     if (col.text) {
                         const text = col.text.toLowerCase();
                         const statusMap = {
@@ -1026,23 +1045,31 @@ class ClaimWebApp {
     }
 
     showLoading(message = 'Loading...', details = '') {
-        document.getElementById('loadingMessage').textContent = message;
-        document.getElementById('loadingDetails').textContent = details;
-        document.getElementById('loadingOverlay').style.display = 'flex';
-        this.logger.log(`Showing loading: ${message} - ${details}`, 'debug');
+        this.safeLog(`Showing loading: ${message}`);
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const loadingMessage = document.getElementById('loadingMessage');
+        const loadingDetails = document.getElementById('loadingDetails');
+
+        if (loadingMessage) loadingMessage.textContent = message;
+        if (loadingDetails) loadingDetails.textContent = details;
+        if (loadingOverlay) loadingOverlay.style.display = 'flex';
     }
 
     hideLoading() {
-        document.getElementById('loadingOverlay').style.display = 'none';
-        this.logger.log('Hiding loading overlay', 'debug');
+        this.safeLog('Hiding loading overlay');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        if (loadingOverlay) {
+            loadingOverlay.style.display = 'none';
+        }
     }
 
     showNotification(message, type = 'success') {
         const notification = document.getElementById('notification');
+        if (!notification) return;
+
         notification.textContent = message;
         notification.className = `notification ${type}`;
-
-        setTimeout(() => notification.classList.remove('hidden'), 100);
+        notification.classList.remove('hidden');
 
         setTimeout(() => {
             notification.classList.add('hidden');
@@ -1050,20 +1077,20 @@ class ClaimWebApp {
     }
 }
 
+// Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-    window.diagnosticLogger.log('📄 DOM Content Loaded - Starting app initialization');
+    // Check if logger is available
+    if (typeof window.diagnosticLogger === 'undefined') {
+        console.log('⚠️ Logger not found, using console fallback');
+    }
+
+    console.log('📄 DOM Content Loaded - Starting app initialization');
     try {
         new ClaimWebApp();
     } catch (error) {
-        window.diagnosticLogger.log(`💥 App initialization crashed: ${error.message}`, 'error');
-        window.diagnosticLogger.showLogger();
+        console.error('💥 App initialization crashed:', error);
+        if (window.diagnosticLogger && window.diagnosticLogger.showLogger) {
+            window.diagnosticLogger.showLogger();
+        }
     }
-});
-
-window.addEventListener('load', () => {
-    window.diagnosticLogger.log('🔄 Window fully loaded');
-});
-
-window.addEventListener('beforeunload', () => {
-    window.diagnosticLogger.log('👋 Page unloading');
 });
