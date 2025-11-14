@@ -181,6 +181,70 @@
     <script src="logger.js"></script>
     <script src="monday-client.js"></script>
     <script src="app.js"></script>
+
+    <!-- Entry Form Modal -->
+    <div id="entryModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Add Entry for <span id="modalDate"></span></h3>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="entryForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Activity Type *</label>
+                            <select id="activityType" required>
+                                <option value="1">Billable</option>
+                                <option value="0">Vacation</option>
+                                <option value="2">Holding</option>
+                                <option value="3">Education</option>
+                                <option value="4">Work Reduction</option>
+                                <option value="5">TBD</option>
+                                <option value="6">Holiday</option>
+                                <option value="7">Presales</option>
+                                <option value="8">Illness</option>
+                                <option value="9">Paid Not Worked</option>
+                                <option value="10">Intellectual Capital</option>
+                                <option value="11">Business Development</option>
+                                <option value="12">Overhead</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Hours *</label>
+                            <input type="number" id="hours" min="0" max="24" step="0.5" value="8" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Customer *</label>
+                        <input type="text" id="customer" placeholder="Customer name" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Work Item *</label>
+                        <input type="text" id="workItem" placeholder="Work item" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Comment</label>
+                        <input type="text" id="comment" placeholder="Optional comment">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="saveEntry" class="btn-primary">
+                            <i class="fas fa-save"></i> Save Entry
+                        </button>
+                        <button type="button" id="updateEntry" class="btn-primary" style="display: none;">
+                            <i class="fas fa-edit"></i> Update Entry
+                        </button>
+                        <button type="button" id="addAnother" class="btn-secondary">
+                            <i class="fas fa-plus"></i> Save & Add Another
+                        </button>
+                        <button type="button" id="cancelEntry" class="btn-secondary">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
 </body>
 
 </html>

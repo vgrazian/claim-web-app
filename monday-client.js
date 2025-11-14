@@ -107,7 +107,6 @@ class MondayClient {
         }
     }
 
-    // Use the same query structure as the Rust CLI tool
     async queryAllItemsInGroup(boardId, groupId, limit = 5000) {
         this.logger?.log(`Querying all items in group: ${groupId} (limit: ${limit})`);
 
@@ -147,14 +146,12 @@ class MondayClient {
                 const items = data.boards[0].groups[0].items_page.items || [];
                 this.logger?.log(`✅ Query returned ${items.length} items`);
 
-                // Log sample items for debugging
                 if (items.length > 0) {
                     this.logger?.log('📋 SAMPLE ITEMS FROM QUERY:');
                     items.slice(0, 3).forEach((item, index) => {
                         this.logger?.log(`   Item ${index + 1}: "${item.name}"`, 'debug');
                         this.logger?.log(`     ID: ${item.id}`, 'debug');
                         if (item.column_values) {
-                            // Find and log important columns
                             const importantColumns = item.column_values.filter(col =>
                                 col.id === 'date4' || col.id === 'person' ||
                                 col.id === 'status' || col.id === 'text__1' ||
@@ -181,14 +178,13 @@ class MondayClient {
         }
     }
 
-    // Alternative query method that matches Rust CLI structure exactly
     async queryItemsPaginated(boardId, groupId, limit = 5000) {
         this.logger?.log(`Querying items with pagination: ${groupId}`);
 
         let allItems = [];
         let cursor = null;
         let page = 1;
-        const pageSize = 100; // Same as Rust CLI
+        const pageSize = 100;
 
         while (true) {
             const query = cursor ? `
@@ -257,13 +253,11 @@ class MondayClient {
                 cursor = itemsPage.cursor;
                 page++;
 
-                // Safety limit
                 if (page > 50) {
                     this.logger?.log('Reached safety limit of 50 pages', 'warn');
                     break;
                 }
 
-                // Small delay to avoid rate limiting (same as Rust CLI)
                 await new Promise(resolve => setTimeout(resolve, 100));
             } catch (error) {
                 this.logger?.log(`Error in paginated query page ${page}: ${error.message}`, 'error');
@@ -307,7 +301,58 @@ class MondayClient {
         }
     }
 
-    // Test connection method
+    async updateItem(itemId, columnValues) {
+        this.logger?.log(`Updating item: ${itemId}`);
+        const query = `
+            mutation UpdateItem($itemId: ID!, $columnValues: JSON!) {
+                change_multiple_column_values(
+                    item_id: $itemId,
+                    column_values: $columnValues
+                ) {
+                    id
+                }
+            }
+        `;
+
+        const variables = {
+            itemId,
+            columnValues
+        };
+
+        try {
+            const data = await this.makeRequest(query, variables);
+            this.logger?.log(`✅ Item updated successfully: ${itemId}`);
+            return data.change_multiple_column_values;
+        } catch (error) {
+            this.logger?.log(`❌ Failed to update item: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    async deleteItem(itemId) {
+        this.logger?.log(`Deleting item: ${itemId}`);
+        const query = `
+            mutation DeleteItem($itemId: ID!) {
+                delete_item(item_id: $itemId) {
+                    id
+                }
+            }
+        `;
+
+        const variables = {
+            itemId
+        };
+
+        try {
+            const data = await this.makeRequest(query, variables);
+            this.logger?.log(`✅ Item deleted successfully: ${itemId}`);
+            return data.delete_item;
+        } catch (error) {
+            this.logger?.log(`❌ Failed to delete item: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
     async testConnection() {
         this.logger?.log('Testing Monday.com connection...');
         try {

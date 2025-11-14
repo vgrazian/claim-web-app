@@ -5,6 +5,9 @@ class ClaimWebApp {
         this.user = null;
         this.entries = new Map();
         this.currentEditingDate = null;
+        this.currentEditingEntry = null;
+        this.isEditing = false;
+        this.lastEntryData = {};
         this.responsivenessCheck = null;
 
         this.logger = window.diagnosticLogger;
@@ -31,34 +34,29 @@ class ClaimWebApp {
     bindEvents() {
         this.logger.log('Binding events...');
 
-        // API Key
         document.getElementById('saveApiKey').addEventListener('click', () => this.saveApiKey());
         document.getElementById('apiKey').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.saveApiKey();
         });
 
-        // Date Navigation
         document.getElementById('prevWeek').addEventListener('click', () => this.previousWeek());
         document.getElementById('nextWeek').addEventListener('click', () => this.nextWeek());
         document.getElementById('weekPicker').addEventListener('change', (e) => this.selectWeek(e.target.value));
         document.getElementById('queryData').addEventListener('click', () => this.loadData());
 
-        // Debug Controls
         document.getElementById('toggleDebug').addEventListener('click', () => this.toggleDebug());
         document.getElementById('forceLoad').addEventListener('click', () => this.forceLoad());
         document.getElementById('testConnection').addEventListener('click', () => this.testConnection());
 
-        // Modal Events
         document.querySelector('.close-modal').addEventListener('click', () => this.closeModal());
         document.getElementById('cancelEntry').addEventListener('click', () => this.closeModal());
         document.getElementById('saveEntry').addEventListener('click', () => this.saveEntry());
+        document.getElementById('updateEntry').addEventListener('click', () => this.updateEntry());
         document.getElementById('addAnother').addEventListener('click', () => this.saveEntry(true));
 
-        // Bulk Actions
         document.getElementById('addMultipleEntries').addEventListener('click', () => this.openMultiEntryModal());
         document.getElementById('clearAll').addEventListener('click', () => this.clearAllEntries());
 
-        // Activity type selection
         document.querySelectorAll('.activity-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 const value = e.target.getAttribute('data-value');
@@ -66,7 +64,6 @@ class ClaimWebApp {
             });
         });
 
-        // Close modal when clicking outside
         document.getElementById('entryModal').addEventListener('click', (e) => {
             if (e.target.id === 'entryModal') {
                 this.closeModal();
@@ -120,7 +117,6 @@ class ClaimWebApp {
         this.loadData();
     }
 
-    // Date and calendar methods
     getMonday(date) {
         const d = new Date(date);
         const day = d.getDay();
@@ -130,7 +126,7 @@ class ClaimWebApp {
 
     getWeekDates(startDate) {
         const dates = [];
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 7; i++) {
             const date = new Date(startDate);
             date.setDate(startDate.getDate() + i);
             dates.push(date);
@@ -159,6 +155,11 @@ class ClaimWebApp {
         });
     }
 
+    isWeekend(date) {
+        const day = date.getDay();
+        return day === 0 || day === 6;
+    }
+
     renderCalendarView() {
         this.logger.log('Rendering calendar view...');
         const calendarGrid = document.getElementById('calendarGrid');
@@ -171,7 +172,7 @@ class ClaimWebApp {
 
         document.getElementById('weekPicker').value = this.formatDate(this.currentWeekStart);
         document.getElementById('weekRange').textContent =
-            `${this.formatShortDate(weekDates[0])} - ${this.formatShortDate(weekDates[4])}`;
+            `${this.formatShortDate(weekDates[0])} - ${this.formatShortDate(weekDates[6])}`;
 
         let html = '';
 
@@ -179,11 +180,12 @@ class ClaimWebApp {
             const dateStr = this.formatDate(date);
             const dayEntries = this.entries.get(dateStr) || [];
             const dayTotalHours = dayEntries.reduce((sum, entry) => sum + parseFloat(entry.hours || 0), 0);
+            const isWeekend = this.isWeekend(date);
 
-            this.logger.log(`Rendering date ${dateStr}: ${dayEntries.length} entries`);
+            this.logger.log(`Rendering date ${dateStr}: ${dayEntries.length} entries, weekend: ${isWeekend}`);
 
             html += `
-                <div class="calendar-day" data-date="${dateStr}">
+                <div class="calendar-day ${isWeekend ? 'weekend-day' : ''}" data-date="${dateStr}">
                     <div class="calendar-day-header">
                         <div>
                             <div class="day-name">${date.toLocaleDateString('en-US', { weekday: 'long' })}</div>
@@ -214,6 +216,20 @@ class ClaimWebApp {
 
         calendarGrid.innerHTML = html;
 
+        document.querySelectorAll('.edit-entry').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const entryId = e.target.closest('.entry-item').getAttribute('data-entry-id');
+                this.editEntry(entryId);
+            });
+        });
+
+        document.querySelectorAll('.delete-entry').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const entryId = e.target.closest('.entry-item').getAttribute('data-entry-id');
+                this.deleteEntry(entryId);
+            });
+        });
+
         document.querySelectorAll('.add-entry-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const date = e.target.getAttribute('data-date');
@@ -232,7 +248,7 @@ class ClaimWebApp {
         const displayComment = entry.comment && entry.comment !== 'null' ? entry.comment : '';
 
         return `
-            <div class="entry-item ${activityClass}">
+            <div class="entry-item ${activityClass}" data-entry-id="${entry.id}">
                 <div class="entry-header">
                     <div class="entry-customer" title="${displayCustomer}">${this.truncateText(displayCustomer, 20)}</div>
                     <div class="entry-hours">${entry.hours}h</div>
@@ -241,6 +257,14 @@ class ClaimWebApp {
                     <span class="entry-activity">${this.getActivityTypeName(entry.activityType)}</span>
                     <span title="${displayWorkItem}">${this.truncateText(displayWorkItem, 25)}</span>
                     ${displayComment ? `<br><small title="${displayComment}">${this.truncateText(displayComment, 30)}</small>` : ''}
+                </div>
+                <div class="entry-actions">
+                    <button class="edit-entry" title="Edit entry">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="delete-entry" title="Delete entry">
+                        <i class="fas fa-trash"></i>
+                    </button>
                 </div>
             </div>
         `;
@@ -278,20 +302,117 @@ class ClaimWebApp {
 
     openEntryModal(date) {
         this.currentEditingDate = date;
+        this.currentEditingEntry = null;
+        this.isEditing = false;
+
         const modal = document.getElementById('entryModal');
         const modalDate = document.getElementById('modalDate');
+        const modalTitle = document.getElementById('modalTitle');
 
         modalDate.textContent = this.formatDisplayDate(new Date(date));
-        modal.style.display = 'block';
+        modalTitle.textContent = 'Add Entry for';
 
-        document.getElementById('entryForm').reset();
-        document.getElementById('activityType').value = '1';
-        document.getElementById('hours').value = '8';
+        document.getElementById('saveEntry').style.display = 'block';
+        document.getElementById('updateEntry').style.display = 'none';
+        document.getElementById('addAnother').style.display = 'block';
+
+        this.fillFormWithData(this.lastEntryData);
+
+        modal.style.display = 'block';
+    }
+
+    editEntry(entryId) {
+        let foundEntry = null;
+        let foundDate = null;
+
+        for (const [date, entries] of this.entries.entries()) {
+            const entry = entries.find(e => e.id === entryId);
+            if (entry) {
+                foundEntry = entry;
+                foundDate = date;
+                break;
+            }
+        }
+
+        if (!foundEntry) {
+            this.showNotification('Entry not found', 'error');
+            return;
+        }
+
+        this.currentEditingDate = foundDate;
+        this.currentEditingEntry = foundEntry;
+        this.isEditing = true;
+
+        const modal = document.getElementById('entryModal');
+        const modalDate = document.getElementById('modalDate');
+        const modalTitle = document.getElementById('modalTitle');
+
+        modalDate.textContent = this.formatDisplayDate(new Date(foundDate));
+        modalTitle.textContent = 'Edit Entry for';
+
+        document.getElementById('saveEntry').style.display = 'none';
+        document.getElementById('updateEntry').style.display = 'block';
+        document.getElementById('addAnother').style.display = 'none';
+
+        this.fillFormWithData(foundEntry);
+
+        modal.style.display = 'block';
+    }
+
+    fillFormWithData(data) {
+        document.getElementById('activityType').value = data.activityType || '1';
+        document.getElementById('customer').value = data.customer || '';
+        document.getElementById('workItem').value = data.workItem || '';
+        document.getElementById('comment').value = data.comment || '';
+        document.getElementById('hours').value = data.hours || '8';
+    }
+
+    async deleteEntry(entryId) {
+        let entryToDelete = null;
+        for (const [date, entries] of this.entries.entries()) {
+            const entry = entries.find(e => e.id === entryId);
+            if (entry) {
+                entryToDelete = entry;
+                break;
+            }
+        }
+
+        if (!entryToDelete) {
+            this.showNotification('Entry not found', 'error');
+            return;
+        }
+
+        const confirmation = confirm(
+            `Are you sure you want to delete this entry?\n\n` +
+            `Customer: ${entryToDelete.customer}\n` +
+            `Work Item: ${entryToDelete.workItem}\n` +
+            `Hours: ${entryToDelete.hours}\n` +
+            `Activity: ${this.getActivityTypeName(entryToDelete.activityType)}`
+        );
+
+        if (!confirmation) {
+            return;
+        }
+
+        this.showLoading('Deleting entry...');
+
+        try {
+            await this.mondayClient.deleteItem(entryId);
+            this.showNotification('Entry deleted successfully!', 'success');
+            await this.loadData();
+        } catch (error) {
+            this.showNotification(`Failed to delete entry: ${error.message}`, 'error');
+            this.logger.log(`Delete entry failed: ${error.message}`, 'error');
+        } finally {
+            this.hideLoading();
+        }
     }
 
     closeModal() {
         document.getElementById('entryModal').style.display = 'none';
         this.currentEditingDate = null;
+        this.currentEditingEntry = null;
+        this.isEditing = false;
     }
 
     async saveEntry(addAnother = false) {
@@ -309,6 +430,8 @@ class ClaimWebApp {
             comment: document.getElementById('comment').value.trim(),
             hours: document.getElementById('hours').value
         };
+
+        this.lastEntryData = { ...entry };
 
         if (!this.user) {
             this.showNotification('Please save your API key first', 'warning');
@@ -347,10 +470,6 @@ class ClaimWebApp {
             this.showNotification('Entry saved successfully!', 'success');
 
             if (addAnother) {
-                document.getElementById('customer').value = '';
-                document.getElementById('workItem').value = '';
-                document.getElementById('comment').value = '';
-                document.getElementById('hours').value = '8';
                 document.getElementById('customer').focus();
             } else {
                 this.closeModal();
@@ -359,6 +478,57 @@ class ClaimWebApp {
         } catch (error) {
             this.showNotification(`Failed to save entry: ${error.message}`, 'error');
             this.logger.log(`Save entry failed: ${error.message}`, 'error');
+        } finally {
+            this.hideLoading();
+        }
+    }
+
+    async updateEntry() {
+        const form = document.getElementById('entryForm');
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+
+        if (!this.currentEditingEntry) {
+            this.showNotification('No entry selected for editing', 'error');
+            return;
+        }
+
+        const updatedEntry = {
+            id: this.currentEditingEntry.id,
+            activityType: document.getElementById('activityType').value,
+            customer: document.getElementById('customer').value.trim(),
+            workItem: document.getElementById('workItem').value.trim(),
+            comment: document.getElementById('comment').value.trim(),
+            hours: document.getElementById('hours').value
+        };
+
+        this.showLoading('Updating entry...');
+
+        try {
+            const columnValues = {
+                status: { index: parseInt(updatedEntry.activityType) },
+                text__1: updatedEntry.customer,
+                text8__1: updatedEntry.workItem,
+                numbers__1: updatedEntry.hours.toString()
+            };
+
+            if (updatedEntry.comment) {
+                columnValues.text2__1 = updatedEntry.comment;
+            }
+
+            await this.mondayClient.updateItem(
+                updatedEntry.id,
+                JSON.stringify(columnValues)
+            );
+
+            this.showNotification('Entry updated successfully!', 'success');
+            this.closeModal();
+            await this.loadData();
+        } catch (error) {
+            this.showNotification(`Failed to update entry: ${error.message}`, 'error');
+            this.logger.log(`Update entry failed: ${error.message}`, 'error');
         } finally {
             this.hideLoading();
         }
@@ -374,6 +544,7 @@ class ClaimWebApp {
     clearAllEntries() {
         if (confirm('Are you sure you want to clear all unsaved entries from the form?')) {
             document.getElementById('entryForm').reset();
+            this.lastEntryData = {};
             this.showNotification('Form cleared', 'success');
         }
     }
@@ -462,7 +633,6 @@ class ClaimWebApp {
             this.updateLoadingDetails('Querying items from Monday.com...');
             this.logger.setProgress(40, 100, 'Querying items');
 
-            // Try different query methods
             const queryMethods = [
                 {
                     name: 'simple',
@@ -504,7 +674,6 @@ class ClaimWebApp {
             this.updateLoadingDetails(`Processing ${items.length} items...`);
             this.logger.setProgress(70, 100, 'Processing items');
 
-            // Process items with enhanced debugging
             this.processItemsWithDebug(items);
 
             this.updateLoadingDetails('Rendering calendar view...');
@@ -523,18 +692,15 @@ class ClaimWebApp {
             this.updateStatus('Error', 'error');
         } finally {
             this.hideLoading();
-            // Reset progress
             setTimeout(() => this.logger.setProgress(0, 100, 'Ready'), 2000);
         }
     }
 
-    // Enhanced processing with better debugging
     processItemsWithDebug(items) {
         const processTimer = this.logger.startTimer('processItems');
         this.entries.clear();
         this.logger.log(`🔍 DEBUG: Starting to process ${items.length} items`);
 
-        // Get current week dates for detailed debugging
         const currentWeekDates = this.getWeekDates(this.currentWeekStart).map(date => this.formatDate(date));
         this.logger.log(`📅 Current week dates being checked: ${currentWeekDates.join(', ')}`);
 
@@ -576,7 +742,6 @@ class ClaimWebApp {
                     }
                 } else {
                     this.logger.log(`❌ NO DATE: Could not extract date for item "${item.name}"`, 'debug');
-                    // Enhanced column logging for debugging date issues
                     if (item.column_values && item.column_values.length > 0) {
                         const dateColumns = item.column_values.filter(col =>
                             col.id === 'date4' || col.id === 'date'
@@ -591,14 +756,12 @@ class ClaimWebApp {
                 }
             } else {
                 userMismatchReasons.push(userCheck.reason);
-                // Log first few mismatches for debugging
                 if (userMismatchReasons.length <= 3) {
                     this.logger.log(`❌ USER MISMATCH: ${userCheck.reason}`, 'debug');
                 }
             }
         });
 
-        // Log detailed summary
         this.logger.log(`📊 PROCESSING SUMMARY:`);
         this.logger.log(`   Total items: ${items.length}`);
         this.logger.log(`   User matches: ${userMatchCount}`);
@@ -612,7 +775,6 @@ class ClaimWebApp {
             this.logger.log(`   User mismatch reasons: ${userMismatchReasons.length} total mismatches`);
         }
 
-        // Debug: Check each day in current week
         this.logger.log(`📅 FINAL ENTRIES BY DATE:`);
         currentWeekDates.forEach(date => {
             const entries = this.entries.get(date) || [];
@@ -625,18 +787,15 @@ class ClaimWebApp {
         this.logger.endTimer(processTimer);
     }
 
-    // Enhanced user item checking with detailed debugging
     debugIsUserItem(item) {
         if (!this.user) {
             return { isMatch: false, reason: 'No user' };
         }
 
-        // Method 1: Check if item name contains user name
         if (item.name && item.name.includes(this.user.name)) {
             return { isMatch: true, reason: 'Name match' };
         }
 
-        // Method 2: Check person column in column_values
         if (item.column_values) {
             for (const col of item.column_values) {
                 if (col.id === 'person') {
@@ -644,7 +803,6 @@ class ClaimWebApp {
                     this.logger.log(`   Column value: ${col.value}`, 'debug');
                     this.logger.log(`   Column text: ${col.text}`, 'debug');
 
-                    // Check value field (JSON format) - this is what the Rust CLI uses
                     if (col.value && col.value !== 'null' && col.value !== '""') {
                         try {
                             const personData = JSON.parse(col.value);
@@ -665,7 +823,6 @@ class ClaimWebApp {
                         }
                     }
 
-                    // Check text field
                     if (col.text && col.text !== 'null' && col.text !== '""') {
                         if (col.text.includes(this.user.name) || col.text.includes(this.user.email)) {
                             this.logger.log(`   ✅ Matched by person text: ${col.text}`, 'debug');
@@ -729,12 +886,10 @@ class ClaimWebApp {
         return null;
     }
 
-    // Keep the original processItems method for backward compatibility
     processItems(items) {
         this.processItemsWithDebug(items);
     }
 
-    // Keep the original isUserItem method for backward compatibility  
     isUserItem(item) {
         const debugResult = this.debugIsUserItem(item);
         return debugResult.isMatch;
@@ -750,14 +905,12 @@ class ClaimWebApp {
             if (col.id === 'date4') {
                 this.logger.log(`🔍 Checking date4 column for item "${item.name}": value="${col.value}", text="${col.text}"`, 'debug');
 
-                // Try to extract from value field (JSON format)
                 if (col.value && col.value !== 'null' && col.value !== '""') {
                     try {
                         const value = JSON.parse(col.value);
                         this.logger.log(`   Parsed date value: ${JSON.stringify(value)}`, 'debug');
 
                         if (value && value.date) {
-                            // Extract just the date part (YYYY-MM-DD)
                             const dateStr = value.date.split('T')[0];
                             this.logger.log(`✅ Extracted date from JSON value: ${dateStr}`);
                             return dateStr;
@@ -767,10 +920,8 @@ class ClaimWebApp {
                     }
                 }
 
-                // Try text field as fallback
                 if (col.text && col.text !== 'null' && col.text !== '""') {
                     const dateStr = col.text.split('T')[0];
-                    // Validate it's a proper date format
                     if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
                         this.logger.log(`✅ Extracted date from text field: ${dateStr}`);
                         return dateStr;
@@ -799,7 +950,6 @@ class ClaimWebApp {
                     return col.text;
                 }
                 if (col.value && col.value !== 'null' && col.value !== '""') {
-                    // Try to parse JSON value
                     try {
                         const value = JSON.parse(col.value);
                         this.logger.log(`Parsed JSON value for ${columnId}: ${JSON.stringify(value)}`, 'debug');
@@ -900,7 +1050,6 @@ class ClaimWebApp {
     }
 }
 
-// Initialize the app when the page loads
 document.addEventListener('DOMContentLoaded', () => {
     window.diagnosticLogger.log('📄 DOM Content Loaded - Starting app initialization');
     try {
