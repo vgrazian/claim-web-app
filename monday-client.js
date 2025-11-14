@@ -17,7 +17,6 @@ class MondayClient {
         }
 
         this.logger?.log('Making Monday.com API request...', 'debug');
-        this.logger?.log(`Query: ${query.substring(0, 100)}...`, 'debug');
 
         try {
             const response = await fetch(this.baseUrl, {
@@ -108,18 +107,95 @@ class MondayClient {
         }
     }
 
-    async queryAllItemsInGroup(boardId, groupId, limit = 100) {
-        this.logger?.log(`Querying all items in group: ${groupId}`);
+    // Use the same query structure as the Rust CLI tool
+    async queryAllItemsInGroup(boardId, groupId, limit = 5000) {
+        this.logger?.log(`Querying all items in group: ${groupId} (limit: ${limit})`);
+
+        const query = `
+            query GetItems($boardId: ID!, $groupId: String!) {
+                boards(ids: [$boardId]) {
+                    groups(ids: [$groupId]) {
+                        id
+                        title
+                        items_page(limit: ${limit}) {
+                            items {
+                                id
+                                name
+                                column_values {
+                                    id
+                                    value
+                                    text
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        `;
+
+        const variables = {
+            boardId,
+            groupId: String(groupId)
+        };
+
+        try {
+            const data = await this.makeRequest(query, variables);
+
+            if (data.boards && data.boards.length > 0 &&
+                data.boards[0].groups && data.boards[0].groups.length > 0 &&
+                data.boards[0].groups[0].items_page) {
+                const items = data.boards[0].groups[0].items_page.items || [];
+                this.logger?.log(`✅ Query returned ${items.length} items`);
+
+                // Log sample items for debugging
+                if (items.length > 0) {
+                    this.logger?.log('📋 SAMPLE ITEMS FROM QUERY:');
+                    items.slice(0, 3).forEach((item, index) => {
+                        this.logger?.log(`   Item ${index + 1}: "${item.name}"`, 'debug');
+                        this.logger?.log(`     ID: ${item.id}`, 'debug');
+                        if (item.column_values) {
+                            // Find and log important columns
+                            const importantColumns = item.column_values.filter(col =>
+                                col.id === 'date4' || col.id === 'person' ||
+                                col.id === 'status' || col.id === 'text__1' ||
+                                col.id === 'text8__1' || col.id === 'numbers__1'
+                            );
+                            if (importantColumns.length > 0) {
+                                this.logger?.log(`     IMPORTANT COLUMNS:`, 'debug');
+                                importantColumns.forEach(col => {
+                                    this.logger?.log(`       ${col.id}: value="${col.value}", text="${col.text}"`, 'debug');
+                                });
+                            }
+                        }
+                    });
+                }
+
+                return items;
+            }
+
+            this.logger?.log('Query returned no items');
+            return [];
+        } catch (error) {
+            this.logger?.log(`❌ Query failed: ${error.message}`, 'error');
+            throw error;
+        }
+    }
+
+    // Alternative query method that matches Rust CLI structure exactly
+    async queryItemsPaginated(boardId, groupId, limit = 5000) {
+        this.logger?.log(`Querying items with pagination: ${groupId}`);
+
         let allItems = [];
         let cursor = null;
         let page = 1;
+        const pageSize = 100; // Same as Rust CLI
 
         while (true) {
             const query = cursor ? `
-                query GetItems($boardId: ID!, $groupId: String!, $limit: Int!, $cursor: String!) {
+                query GetItemsPage($boardId: ID!, $groupId: String!, $cursor: String!) {
                     boards(ids: [$boardId]) {
                         groups(ids: [$groupId]) {
-                            items_page(limit: $limit, cursor: $cursor) {
+                            items_page(limit: ${pageSize}, cursor: $cursor) {
                                 cursor
                                 items {
                                     id
@@ -135,10 +211,10 @@ class MondayClient {
                     }
                 }
             ` : `
-                query GetItems($boardId: ID!, $groupId: String!, $limit: Int!) {
+                query GetItemsPage($boardId: ID!, $groupId: String!) {
                     boards(ids: [$boardId]) {
                         groups(ids: [$groupId]) {
-                            items_page(limit: $limit) {
+                            items_page(limit: ${pageSize}) {
                                 cursor
                                 items {
                                     id
@@ -156,37 +232,25 @@ class MondayClient {
             `;
 
             const variables = cursor ?
-                { boardId, groupId: String(groupId), limit, cursor } :
-                { boardId, groupId: String(groupId), limit };
+                { boardId, groupId: String(groupId), cursor } :
+                { boardId, groupId: String(groupId) };
 
             try {
                 const data = await this.makeRequest(query, variables);
 
-                if (!data.boards || data.boards.length === 0) {
-                    this.logger?.log('No boards found in response');
+                if (!data.boards || data.boards.length === 0 ||
+                    !data.boards[0].groups || data.boards[0].groups.length === 0 ||
+                    !data.boards[0].groups[0].items_page) {
                     break;
                 }
 
-                const board = data.boards[0];
-                if (!board.groups || board.groups.length === 0) {
-                    this.logger?.log('No groups found in board');
-                    break;
-                }
-
-                const group = board.groups[0];
-                if (!group.items_page) {
-                    this.logger?.log('No items_page found in group');
-                    break;
-                }
-
-                const itemsPage = group.items_page;
+                const itemsPage = data.boards[0].groups[0].items_page;
                 const pageItems = itemsPage.items || [];
                 allItems = allItems.concat(pageItems);
 
-                this.logger?.log(`Page ${page}: Got ${pageItems.length} items`);
+                this.logger?.log(`Page ${page}: ${pageItems.length} items (Total: ${allItems.length})`);
 
-                if (!itemsPage.cursor || pageItems.length < limit) {
-                    this.logger?.log('No more pages or reached limit');
+                if (!itemsPage.cursor || pageItems.length < pageSize || allItems.length >= limit) {
                     break;
                 }
 
@@ -194,64 +258,21 @@ class MondayClient {
                 page++;
 
                 // Safety limit
-                if (page > 10) {
-                    this.logger?.log('Reached safety limit of 10 pages', 'warn');
+                if (page > 50) {
+                    this.logger?.log('Reached safety limit of 50 pages', 'warn');
                     break;
                 }
 
-                // Small delay to avoid rate limiting
+                // Small delay to avoid rate limiting (same as Rust CLI)
                 await new Promise(resolve => setTimeout(resolve, 100));
             } catch (error) {
-                this.logger?.log(`Error in paginated query: ${error.message}`, 'error');
+                this.logger?.log(`Error in paginated query page ${page}: ${error.message}`, 'error');
                 throw error;
             }
         }
 
-        this.logger?.log(`✅ Total items collected: ${allItems.length}`);
+        this.logger?.log(`✅ Paginated query completed: ${allItems.length} total items`);
         return allItems;
-    }
-
-    async getItemsSimple(boardId, groupId, limit = 100) {
-        this.logger?.log(`Getting items with simple query: ${groupId}`);
-        const query = `
-            query GetItemsSimple($boardId: ID!, $groupId: String!) {
-                boards(ids: [$boardId]) {
-                    groups(ids: [$groupId]) {
-                        items(limit: ${limit}) {
-                            id
-                            name
-                            column_values {
-                                id
-                                value
-                                text
-                            }
-                        }
-                    }
-                }
-            }
-        `;
-
-        const variables = {
-            boardId,
-            groupId: String(groupId)
-        };
-
-        try {
-            const data = await this.makeRequest(query, variables);
-
-            if (data.boards && data.boards.length > 0 &&
-                data.boards[0].groups && data.boards[0].groups.length > 0) {
-                const items = data.boards[0].groups[0].items || [];
-                this.logger?.log(`✅ Simple query returned ${items.length} items`);
-                return items;
-            }
-
-            this.logger?.log('Simple query returned no items');
-            return [];
-        } catch (error) {
-            this.logger?.log(`❌ Simple query failed: ${error.message}`, 'error');
-            throw error;
-        }
     }
 
     async createItem(boardId, groupId, itemName, columnValues) {
@@ -282,44 +303,6 @@ class MondayClient {
             return data.create_item;
         } catch (error) {
             this.logger?.log(`❌ Failed to create item: ${error.message}`, 'error');
-            throw error;
-        }
-    }
-
-    async getItemsBasic(boardId, groupId) {
-        this.logger?.log(`Getting items with basic query: ${groupId}`);
-        const query = `
-            {
-                boards(ids: ["${boardId}"]) {
-                    groups(ids: ["${groupId}"]) {
-                        items {
-                            id
-                            name
-                            column_values {
-                                id
-                                value
-                                text
-                            }
-                        }
-                    }
-                }
-            }
-        `;
-
-        try {
-            const data = await this.makeRequest(query);
-
-            if (data.boards && data.boards.length > 0 &&
-                data.boards[0].groups && data.boards[0].groups.length > 0) {
-                const items = data.boards[0].groups[0].items || [];
-                this.logger?.log(`✅ Basic query returned ${items.length} items`);
-                return items;
-            }
-
-            this.logger?.log('Basic query returned no items');
-            return [];
-        } catch (error) {
-            this.logger?.log(`❌ Basic query failed: ${error.message}`, 'error');
             throw error;
         }
     }

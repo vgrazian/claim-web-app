@@ -4,6 +4,11 @@ class DiagnosticLogger {
         this.logs = [];
         this.maxLogs = 1000;
         this.isEnabled = true;
+        this.progress = {
+            current: 0,
+            total: 100,
+            message: ''
+        };
         this.initializeLogger();
     }
 
@@ -142,6 +147,61 @@ class DiagnosticLogger {
         document.getElementById('diagnosticLogger').style.display = 'block';
         document.getElementById('toggleLogger').textContent = 'Hide';
         this.updateLoggerUI();
+    }
+
+    // Progress tracking methods
+    setProgress(current, total, message = '') {
+        this.progress = { current, total, message };
+        this.updateProgressBar();
+    }
+
+    updateProgressBar() {
+        const logger = document.getElementById('diagnosticLogger');
+        if (logger && logger.style.display !== 'none') {
+            let progressBar = document.getElementById('loggerProgressBar');
+            if (!progressBar) {
+                progressBar = document.createElement('div');
+                progressBar.id = 'loggerProgressBar';
+                progressBar.style.cssText = `
+                    background: #333;
+                    height: 4px;
+                    margin: 5px 10px;
+                    border-radius: 2px;
+                    overflow: hidden;
+                `;
+
+                const progressFill = document.createElement('div');
+                progressFill.id = 'loggerProgressFill';
+                progressFill.style.cssText = `
+                    background: #3498db;
+                    height: 100%;
+                    width: 0%;
+                    transition: width 0.3s ease;
+                `;
+
+                progressBar.appendChild(progressFill);
+                const loggerHeader = logger.querySelector('div:first-child');
+                loggerHeader.parentNode.insertBefore(progressBar, loggerHeader.nextSibling);
+            }
+
+            const progressFill = document.getElementById('loggerProgressFill');
+            const percentage = this.progress.total > 0 ? (this.progress.current / this.progress.total) * 100 : 0;
+            progressFill.style.width = `${percentage}%`;
+
+            // Update progress text
+            let progressText = document.getElementById('loggerProgressText');
+            if (!progressText) {
+                progressText = document.createElement('div');
+                progressText.id = 'loggerProgressText';
+                progressText.style.cssText = `
+                    color: #3498db;
+                    font-size: 11px;
+                    padding: 0 10px 5px 10px;
+                `;
+                progressBar.parentNode.insertBefore(progressText, progressBar.nextSibling);
+            }
+            progressText.textContent = `${this.progress.message} (${this.progress.current}/${this.progress.total})`;
+        }
     }
 
     // Performance monitoring

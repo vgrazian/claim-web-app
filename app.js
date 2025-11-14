@@ -425,18 +425,19 @@ class ClaimWebApp {
 
         const loadTimer = this.logger.startTimer('loadData');
         this.updateStatus('Loading Data', 'loading');
-        this.showLoading('Loading entries...', 'Fetching data from Monday.com...');
+
+        this.showLoading('Loading weekly entries...', 'Initializing data fetch...');
+        this.logger.setProgress(0, 100, 'Starting data load');
 
         try {
             const currentYear = new Date().getFullYear().toString();
-            this.logger.log(`Loading data for year: ${currentYear}`);
-            this.logger.log(`Current user: ${this.user.name} (ID: ${this.user.id})`);
+            this.logger.log(`Loading data for year: ${currentYear} and user: ${this.user.name} (ID: ${this.user.id})`);
             this.updateLoadingDetails('Getting board information...');
+            this.logger.setProgress(10, 100, 'Fetching board data');
 
             const board = await this.mondayClient.getBoardWithGroups('6500270039');
-            this.logger.log('Board data received');
-            this.logger.log(`Board groups: ${board.groups?.map(g => `${g.title} (${g.id})`).join(', ')}`);
-            this.updateLoadingDetails('Processing board data...');
+            this.updateLoadingDetails('Processing board structure...');
+            this.logger.setProgress(20, 100, 'Processing board');
 
             if (!board || !board.groups) {
                 this.logger.log('No board data found', 'error');
@@ -446,8 +447,9 @@ class ClaimWebApp {
             }
 
             const groupId = this.getYearGroupId(board, currentYear);
-            this.logger.log(`Found group ID: ${groupId}`);
-            this.updateLoadingDetails(`Using group: ${groupId}`);
+            this.logger.log(`Using group ID: ${groupId}`);
+            this.updateLoadingDetails(`Target group: ${groupId}`);
+            this.logger.setProgress(30, 100, 'Identified target group');
 
             if (!groupId) {
                 this.logger.log(`Could not find group for year ${currentYear}`, 'warn');
@@ -457,38 +459,62 @@ class ClaimWebApp {
             }
 
             let items = [];
-            this.updateLoadingDetails('Querying items...');
+            this.updateLoadingDetails('Querying items from Monday.com...');
+            this.logger.setProgress(40, 100, 'Querying items');
 
+            // Try different query methods
             const queryMethods = [
-                { name: 'simple', method: () => this.mondayClient.getItemsSimple('6500270039', groupId, 200) },
-                { name: 'paginated', method: () => this.mondayClient.queryAllItemsInGroup('6500270039', groupId, 200) },
-                { name: 'basic', method: () => this.mondayClient.getItemsBasic('6500270039', groupId) }
+                {
+                    name: 'simple',
+                    method: () => this.mondayClient.queryAllItemsInGroup('6500270039', groupId, 5000)
+                },
+                {
+                    name: 'paginated',
+                    method: () => this.mondayClient.queryItemsPaginated('6500270039', groupId, 5000)
+                }
             ];
 
             for (const method of queryMethods) {
                 try {
-                    this.updateLoadingDetails(`Trying ${method.name} query...`);
-                    this.logger.log(`Trying ${method.name} query...`);
+                    this.updateLoadingDetails(`Trying ${method.name} query method...`);
+                    this.logger.setProgress(50, 100, `Trying ${method.name} query`);
+                    this.logger.log(`🔍 Attempting ${method.name} query...`);
                     items = await method.method();
-                    this.logger.log(`✅ ${method.name} query successful: ${items.length} items`);
-                    break;
+
+                    if (items.length > 0) {
+                        this.logger.log(`✅ ${method.name} query successful: ${items.length} items found`);
+                        break;
+                    } else {
+                        this.logger.log(`⚠️ ${method.name} query returned 0 items`, 'warn');
+                    }
                 } catch (error) {
                     this.logger.log(`❌ ${method.name} query failed: ${error.message}`, 'warn');
                 }
             }
 
+            this.logger.log(`📊 Final item count from all queries: ${items.length}`);
+
+            if (items.length === 0) {
+                this.logger.log('❌ No items found in any query method', 'error');
+                this.showNotification('No items found in Monday.com board. Please check if the board has items in the current year group.', 'warning');
+                this.updateStatus('Ready');
+                return;
+            }
+
             this.updateLoadingDetails(`Processing ${items.length} items...`);
-            this.logger.log(`Total items to process: ${items.length}`);
+            this.logger.setProgress(70, 100, 'Processing items');
 
-            this.processItems(items);
-            this.logger.log(`Processing complete - ${this.entries.size} dates have entries`);
+            // Process items with enhanced debugging
+            this.processItemsWithDebug(items);
 
-            this.updateLoadingDetails('Rendering calendar...');
+            this.updateLoadingDetails('Rendering calendar view...');
+            this.logger.setProgress(90, 100, 'Rendering UI');
             this.renderCalendarView();
 
             const duration = this.logger.endTimer(loadTimer);
-            this.logger.log(`✅ Data load completed in ${duration.toFixed(0)}ms`);
-            this.showNotification(`Loaded ${items.length} entries successfully`, 'success');
+            this.logger.setProgress(100, 100, 'Complete');
+            this.logger.log(`✅ Data load completed in ${duration.toFixed(0)}ms - Found entries for ${this.entries.size} dates`);
+            this.showNotification(`Loaded ${items.length} entries for ${this.entries.size} days`, 'success');
             this.updateStatus('Ready');
 
         } catch (error) {
@@ -497,7 +523,165 @@ class ClaimWebApp {
             this.updateStatus('Error', 'error');
         } finally {
             this.hideLoading();
+            // Reset progress
+            setTimeout(() => this.logger.setProgress(0, 100, 'Ready'), 2000);
         }
+    }
+
+    // Enhanced processing with better debugging
+    processItemsWithDebug(items) {
+        const processTimer = this.logger.startTimer('processItems');
+        this.entries.clear();
+        this.logger.log(`🔍 DEBUG: Starting to process ${items.length} items`);
+
+        // Get current week dates for detailed debugging
+        const currentWeekDates = this.getWeekDates(this.currentWeekStart).map(date => this.formatDate(date));
+        this.logger.log(`📅 Current week dates being checked: ${currentWeekDates.join(', ')}`);
+
+        let userMatchCount = 0;
+        let dateExtractedCount = 0;
+        let currentWeekEntries = 0;
+        let userMismatchReasons = [];
+
+        this.logger.log(`👤 Looking for items assigned to user: ${this.user.name} (ID: ${this.user.id})`);
+
+        items.forEach((item, index) => {
+            const userCheck = this.debugIsUserItem(item);
+            if (userCheck.isMatch) {
+                userMatchCount++;
+                const date = this.extractItemDate(item);
+
+                if (date) {
+                    if (currentWeekDates.includes(date)) {
+                        dateExtractedCount++;
+                        currentWeekEntries++;
+
+                        if (!this.entries.has(date)) {
+                            this.entries.set(date, []);
+                        }
+
+                        const entryData = {
+                            id: item.id,
+                            activityType: this.extractStatusValue(item),
+                            customer: this.extractColumnValue(item, 'text__1'),
+                            workItem: this.extractColumnValue(item, 'text8__1'),
+                            comment: this.extractCommentValue(item),
+                            hours: this.extractColumnValue(item, 'numbers__1')
+                        };
+
+                        this.logger.log(`✅ ADDED: ${date} - ${entryData.customer} (${entryData.hours}h)`, 'debug');
+                        this.entries.get(date).push(entryData);
+                    } else {
+                        this.logger.log(`❌ DATE OUTSIDE WEEK: ${date} for item "${item.name}"`, 'debug');
+                    }
+                } else {
+                    this.logger.log(`❌ NO DATE: Could not extract date for item "${item.name}"`, 'debug');
+                    // Enhanced column logging for debugging date issues
+                    if (item.column_values && item.column_values.length > 0) {
+                        const dateColumns = item.column_values.filter(col =>
+                            col.id === 'date4' || col.id === 'date'
+                        );
+                        if (dateColumns.length > 0) {
+                            this.logger.log(`   📅 DATE COLUMNS FOR ITEM "${item.name}":`, 'debug');
+                            dateColumns.forEach(col => {
+                                this.logger.log(`     ${col.id}: value="${col.value}", text="${col.text}"`, 'debug');
+                            });
+                        }
+                    }
+                }
+            } else {
+                userMismatchReasons.push(userCheck.reason);
+                // Log first few mismatches for debugging
+                if (userMismatchReasons.length <= 3) {
+                    this.logger.log(`❌ USER MISMATCH: ${userCheck.reason}`, 'debug');
+                }
+            }
+        });
+
+        // Log detailed summary
+        this.logger.log(`📊 PROCESSING SUMMARY:`);
+        this.logger.log(`   Total items: ${items.length}`);
+        this.logger.log(`   User matches: ${userMatchCount}`);
+        this.logger.log(`   Items with dates: ${dateExtractedCount}`);
+        this.logger.log(`   Current week entries: ${currentWeekEntries}`);
+
+        if (userMismatchReasons.length > 0 && userMismatchReasons.length <= 10) {
+            const uniqueReasons = [...new Set(userMismatchReasons)];
+            this.logger.log(`   User mismatch reasons (first 10): ${uniqueReasons.slice(0, 10).join(', ')}`);
+        } else if (userMismatchReasons.length > 10) {
+            this.logger.log(`   User mismatch reasons: ${userMismatchReasons.length} total mismatches`);
+        }
+
+        // Debug: Check each day in current week
+        this.logger.log(`📅 FINAL ENTRIES BY DATE:`);
+        currentWeekDates.forEach(date => {
+            const entries = this.entries.get(date) || [];
+            this.logger.log(`   ${date}: ${entries.length} entries`);
+            if (entries.length === 0) {
+                this.logger.log(`   ⚠️  NO ENTRIES for ${date}`, 'warn');
+            }
+        });
+
+        this.logger.endTimer(processTimer);
+    }
+
+    // Enhanced user item checking with detailed debugging
+    debugIsUserItem(item) {
+        if (!this.user) {
+            return { isMatch: false, reason: 'No user' };
+        }
+
+        // Method 1: Check if item name contains user name
+        if (item.name && item.name.includes(this.user.name)) {
+            return { isMatch: true, reason: 'Name match' };
+        }
+
+        // Method 2: Check person column in column_values
+        if (item.column_values) {
+            for (const col of item.column_values) {
+                if (col.id === 'person') {
+                    this.logger.log(`🔍 Checking person column for item "${item.name}":`, 'debug');
+                    this.logger.log(`   Column value: ${col.value}`, 'debug');
+                    this.logger.log(`   Column text: ${col.text}`, 'debug');
+
+                    // Check value field (JSON format) - this is what the Rust CLI uses
+                    if (col.value && col.value !== 'null' && col.value !== '""') {
+                        try {
+                            const personData = JSON.parse(col.value);
+                            this.logger.log(`   Parsed person data: ${JSON.stringify(personData)}`, 'debug');
+
+                            if (personData.personsAndTeams && Array.isArray(personData.personsAndTeams)) {
+                                const isUser = personData.personsAndTeams.some(person => {
+                                    const match = person.id === this.user.id;
+                                    if (match) {
+                                        this.logger.log(`   ✅ Matched by person ID: ${person.id} === ${this.user.id}`, 'debug');
+                                    }
+                                    return match;
+                                });
+                                if (isUser) return { isMatch: true, reason: 'Person ID match' };
+                            }
+                        } catch (e) {
+                            this.logger.log(`   Failed to parse person JSON: ${e.message}`, 'debug');
+                        }
+                    }
+
+                    // Check text field
+                    if (col.text && col.text !== 'null' && col.text !== '""') {
+                        if (col.text.includes(this.user.name) || col.text.includes(this.user.email)) {
+                            this.logger.log(`   ✅ Matched by person text: ${col.text}`, 'debug');
+                            return { isMatch: true, reason: 'Person text match' };
+                        }
+                    }
+
+                    this.logger.log(`   ❌ Person column exists but no match found`, 'debug');
+                }
+            }
+        }
+
+        return {
+            isMatch: false,
+            reason: `No match - item: "${item.name}", user: ${this.user.name} (${this.user.id})`
+        };
     }
 
     updateLoadingDetails(details) {
@@ -514,157 +698,46 @@ class ClaimWebApp {
             return null;
         }
 
+        this.logger.log(`🔍 Looking for group for year: ${year}`);
+        this.logger.log(`   Available groups: ${board.groups.map(g => `${g.title} (${g.id})`).join(', ')}`);
+
         let group = board.groups.find(g => g.title === year);
-        if (group) return group.id;
+        if (group) {
+            this.logger.log(`✅ Found exact year match: ${group.title} (${group.id})`);
+            return group.id;
+        }
 
         const currentYear = new Date().getFullYear().toString();
         group = board.groups.find(g => g.title === currentYear);
-        if (group) return group.id;
+        if (group) {
+            this.logger.log(`✅ Found current year match: ${group.title} (${group.id})`);
+            return group.id;
+        }
 
         group = board.groups.find(g => g.title.includes(year));
-        if (group) return group.id;
+        if (group) {
+            this.logger.log(`✅ Found partial year match: ${group.title} (${group.id})`);
+            return group.id;
+        }
 
         if (board.groups.length > 0) {
-            this.logger.log(`Using first group as fallback: ${board.groups[0].title}`);
+            this.logger.log(`⚠️ Using first group as fallback: ${board.groups[0].title} (${board.groups[0].id})`);
             return board.groups[0].id;
         }
 
+        this.logger.log('❌ No suitable group found');
         return null;
     }
 
+    // Keep the original processItems method for backward compatibility
     processItems(items) {
-        const processTimer = this.logger.startTimer('processItems');
-        this.entries.clear();
-        this.logger.log(`Processing ${items.length} items...`);
-
-        let userMatchCount = 0;
-        let dateExtractedCount = 0;
-        let currentWeekEntries = 0;
-
-        // Get current week dates for filtering
-        const currentWeekDates = this.getWeekDates(this.currentWeekStart).map(date => this.formatDate(date));
-        this.logger.log(`Current week dates: ${currentWeekDates.join(', ')}`);
-
-        items.forEach((item, index) => {
-            const isUserItem = this.isUserItem(item);
-            if (isUserItem) {
-                userMatchCount++;
-                const date = this.extractItemDate(item);
-
-                if (date) {
-                    // Only include items from current week
-                    if (currentWeekDates.includes(date)) {
-                        dateExtractedCount++;
-                        currentWeekEntries++;
-                        if (!this.entries.has(date)) {
-                            this.entries.set(date, []);
-                        }
-
-                        const entryData = {
-                            id: item.id,
-                            activityType: this.extractStatusValue(item),
-                            customer: this.extractColumnValue(item, 'text__1'),
-                            workItem: this.extractColumnValue(item, 'text8__1'),
-                            comment: this.extractCommentValue(item),
-                            hours: this.extractColumnValue(item, 'numbers__1')
-                        };
-
-                        this.logger.log(`✅ Adding entry for ${date}: ${entryData.customer} - ${entryData.hours}h`);
-                        this.entries.get(date).push(entryData);
-                    } else {
-                        this.logger.log(`⚠️ Entry for ${date} is outside current week`, 'debug');
-                    }
-                } else {
-                    this.logger.log(`❌ Could not extract date for user item: ${item.name}`);
-                }
-            } else {
-                this.logger.log(`❌ Item does not match user: ${item.name}`, 'debug');
-            }
-        });
-
-        this.logger.endTimer(processTimer);
-        this.logger.log(`Processing summary: ${userMatchCount} user matches, ${dateExtractedCount} with dates in current week`);
-        this.logger.log(`Current week entries: ${currentWeekEntries}`);
-
-        // Log entries for each date in current week
-        currentWeekDates.forEach(date => {
-            const entries = this.entries.get(date) || [];
-            this.logger.log(`Date ${date}: ${entries.length} entries`);
-            entries.forEach(entry => {
-                this.logger.log(`  - ${entry.customer}: ${entry.hours}h (${this.getActivityTypeName(entry.activityType)})`);
-            });
-        });
+        this.processItemsWithDebug(items);
     }
 
+    // Keep the original isUserItem method for backward compatibility  
     isUserItem(item) {
-        if (!this.user) {
-            return false;
-        }
-
-        this.logger.log(`Checking user match for item: ${item.name}`, 'debug');
-
-        // Method 1: Check if item name contains user name (most common case)
-        if (item.name && item.name.includes(this.user.name)) {
-            this.logger.log(`✅ Matched by item name: ${item.name} contains ${this.user.name}`);
-            return true;
-        }
-
-        // Method 2: Check person column in column_values
-        if (item.column_values) {
-            for (const col of item.column_values) {
-                if (col.id === 'person') {
-                    this.logger.log(`Found person column: ${JSON.stringify(col)}`, 'debug');
-
-                    // Check value field (JSON format)
-                    if (col.value && col.value !== 'null' && col.value !== '""') {
-                        try {
-                            const personData = JSON.parse(col.value);
-                            this.logger.log(`Parsed person data: ${JSON.stringify(personData)}`, 'debug');
-
-                            if (personData.personsAndTeams && Array.isArray(personData.personsAndTeams)) {
-                                const isUser = personData.personsAndTeams.some(person => {
-                                    const match = person.id === this.user.id;
-                                    if (match) {
-                                        this.logger.log(`✅ Matched by person ID: ${person.id} === ${this.user.id}`);
-                                    }
-                                    return match;
-                                });
-                                if (isUser) return true;
-                            }
-                        } catch (e) {
-                            this.logger.log(`Failed to parse person JSON: ${e.message}`, 'debug');
-                        }
-                    }
-
-                    // Check text field
-                    if (col.text && col.text !== 'null' && col.text !== '""') {
-                        if (col.text.includes(this.user.name) || col.text.includes(this.user.email)) {
-                            this.logger.log(`✅ Matched by person text: ${col.text}`);
-                            return true;
-                        }
-
-                        // Try to parse text as JSON
-                        try {
-                            const textData = JSON.parse(col.text);
-                            if (textData.personsAndTeams && Array.isArray(textData.personsAndTeams)) {
-                                const isUser = textData.personsAndTeams.some(person =>
-                                    person.id === this.user.id
-                                );
-                                if (isUser) {
-                                    this.logger.log(`✅ Matched by parsed text JSON`);
-                                    return true;
-                                }
-                            }
-                        } catch (e) {
-                            // Text is not JSON, continue
-                        }
-                    }
-                }
-            }
-        }
-
-        this.logger.log(`❌ No user match found for item: ${item.name}`);
-        return false;
+        const debugResult = this.debugIsUserItem(item);
+        return debugResult.isMatch;
     }
 
     extractItemDate(item) {
@@ -675,13 +748,13 @@ class ClaimWebApp {
 
         for (const col of item.column_values) {
             if (col.id === 'date4') {
-                this.logger.log(`Found date4 column: ${JSON.stringify(col)}`, 'debug');
+                this.logger.log(`🔍 Checking date4 column for item "${item.name}": value="${col.value}", text="${col.text}"`, 'debug');
 
                 // Try to extract from value field (JSON format)
                 if (col.value && col.value !== 'null' && col.value !== '""') {
                     try {
                         const value = JSON.parse(col.value);
-                        this.logger.log(`Parsed date value: ${JSON.stringify(value)}`, 'debug');
+                        this.logger.log(`   Parsed date value: ${JSON.stringify(value)}`, 'debug');
 
                         if (value && value.date) {
                             // Extract just the date part (YYYY-MM-DD)
@@ -690,7 +763,7 @@ class ClaimWebApp {
                             return dateStr;
                         }
                     } catch (e) {
-                        this.logger.log(`Failed to parse date JSON: ${e.message}`, 'debug');
+                        this.logger.log(`   Failed to parse date JSON: ${e.message}`, 'debug');
                     }
                 }
 
@@ -702,7 +775,7 @@ class ClaimWebApp {
                         this.logger.log(`✅ Extracted date from text field: ${dateStr}`);
                         return dateStr;
                     } else {
-                        this.logger.log(`Invalid date format in text: ${dateStr}`, 'debug');
+                        this.logger.log(`   Invalid date format in text: ${dateStr}`, 'debug');
                     }
                 }
 
@@ -719,7 +792,7 @@ class ClaimWebApp {
 
         for (const col of item.column_values) {
             if (col.id === columnId) {
-                this.logger.log(`Found column ${columnId}: ${JSON.stringify(col)}`, 'debug');
+                this.logger.log(`Found column ${columnId}: value="${col.value}", text="${col.text}"`, 'debug');
 
                 if (col.text && col.text !== 'null' && col.text !== '""') {
                     this.logger.log(`✅ Using text value for ${columnId}: ${col.text}`);

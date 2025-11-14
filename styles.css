@@ -114,6 +114,50 @@ button:hover {
     color: #2c3e50;
 }
 
+/* Debug Panel */
+.debug-panel {
+    background: #f8f9fa;
+    padding: 10px 20px;
+    border-bottom: 1px solid #e9ecef;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.debug-panel button {
+    padding: 6px 12px;
+    font-size: 12px;
+    border: 1px solid #ddd;
+}
+
+.status-indicator {
+    margin-left: auto;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid transparent;
+}
+
+.status-indicator.ready {
+    background: #d4edda;
+    color: #155724;
+    border-color: #c3e6cb;
+}
+
+.status-indicator.loading {
+    background: #fff3cd;
+    color: #856404;
+    border-color: #ffeaa7;
+}
+
+.status-indicator.error {
+    background: #f8d7da;
+    color: #721c24;
+    border-color: #f5c6cb;
+}
+
 /* Calendar View */
 .calendar-view {
     padding: 20px;
@@ -172,7 +216,7 @@ button:hover {
     border-radius: 10px;
     padding: 20px;
     transition: all 0.3s ease;
-    min-height: 400px;
+    min-height: 450px;
 }
 
 .calendar-day:hover {
@@ -211,18 +255,19 @@ button:hover {
 }
 
 .entries-list {
-    min-height: 200px;
-    max-height: 300px;
+    min-height: 250px;
+    max-height: 320px;
     overflow-y: auto;
 }
 
 .entry-item {
     background: white;
-    padding: 12px;
-    margin-bottom: 10px;
+    padding: 10px;
+    margin-bottom: 8px;
     border-radius: 8px;
     border-left: 4px solid #3498db;
     box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    font-size: 13px;
 }
 
 .entry-header {
@@ -235,7 +280,7 @@ button:hover {
 .entry-customer {
     font-weight: 600;
     color: #2c3e50;
-    font-size: 14px;
+    font-size: 13px;
 }
 
 .entry-hours {
@@ -248,9 +293,9 @@ button:hover {
 }
 
 .entry-details {
-    font-size: 12px;
+    font-size: 11px;
     color: #7f8c8d;
-    line-height: 1.4;
+    line-height: 1.3;
 }
 
 .entry-activity {
@@ -523,6 +568,16 @@ button:hover {
     opacity: 0;
 }
 
+/* Enhanced loading details */
+#loadingDetails {
+    max-width: 400px;
+    text-align: center;
+    font-size: 14px;
+    color: #666;
+    margin-top: 15px;
+    line-height: 1.4;
+}
+
 /* Entry status colors */
 .entry-item.vacation { border-left-color: #e74c3c; }
 .entry-item.billable { border-left-color: #3498db; }
@@ -537,6 +592,23 @@ button:hover {
 .entry-item.intellectual_capital { border-left-color: #16a085; }
 .entry-item.business_development { border-left-color: #27ae60; }
 .entry-item.overhead { border-left-color: #7f8c8d; }
+
+/* Enhanced empty states with debugging hints */
+.empty-state.debug-hint {
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    color: #856404;
+    padding: 15px;
+    border-radius: 5px;
+    margin-top: 10px;
+    font-size: 12px;
+    text-align: left;
+}
+
+.empty-state.debug-hint ul {
+    margin: 10px 0 0 20px;
+    text-align: left;
+}
 
 @media (max-width: 768px) {
     .container {
@@ -581,79 +653,14 @@ button:hover {
     .user-details {
         justify-content: center;
     }
-}
-
-/* Add these to your existing styles.css */
-
-.debug-panel {
-    background: #f8f9fa;
-    padding: 10px 20px;
-    border-bottom: 1px solid #e9ecef;
-    display: flex;
-    gap: 10px;
-    align-items: center;
-}
-
-.debug-panel button {
-    padding: 6px 12px;
-    font-size: 12px;
-}
-
-.status-indicator {
-    margin-left: auto;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 500;
-}
-
-.status-indicator.ready {
-    background: #d4edda;
-    color: #155724;
-}
-
-.status-indicator.loading {
-    background: #fff3cd;
-    color: #856404;
-}
-
-.status-indicator.error {
-    background: #f8d7da;
-    color: #721c24;
-}
-
-#loadingDetails {
-    max-width: 300px;
-    text-align: center;
-}
-
-/* Add these to your existing styles.css */
-
-.calendar-day {
-    min-height: 450px; /* Increased from 400px */
-}
-
-.entries-list {
-    min-height: 250px; /* Increased from 200px */
-    max-height: 320px; /* Increased from 300px */
-}
-
-.entry-item {
-    padding: 10px; /* Slightly more padding */
-    margin-bottom: 8px;
-    font-size: 13px; /* Slightly smaller font */
-}
-
-.entry-customer {
-    font-weight: 600;
-    font-size: 13px;
-}
-
-.entry-details {
-    font-size: 11px; /* Smaller font for details */
-    line-height: 1.3;
-}
-
-.empty-state {
-    padding: 30px 20px; /* More padding for empty state */
+    
+    .debug-panel {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .status-indicator {
+        margin-left: 0;
+        text-align: center;
+    }
 }
