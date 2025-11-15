@@ -18,8 +18,6 @@ class MondayClient {
             throw new Error('API key not set');
         }
 
-        this.logger?.log('Making Monday.com API request...', 'debug');
-
         try {
             const response = await fetch(this.baseUrl, {
                 method: 'POST',
@@ -36,7 +34,6 @@ class MondayClient {
 
             if (!response.ok) {
                 const errorText = await response.text();
-                this.logger?.log(`HTTP error! status: ${response.status}`, 'error');
                 throw new Error(`HTTP error! status: ${response.status}, response: ${errorText}`);
             }
 
@@ -44,11 +41,9 @@ class MondayClient {
 
             if (result.errors && result.errors.length > 0) {
                 const errorMessages = result.errors.map(error => error.message).join(', ');
-                this.logger?.log(`Monday.com API error: ${errorMessages}`, 'error');
                 throw new Error(`Monday.com API error: ${errorMessages}`);
             }
 
-            this.logger?.log('API request successful', 'debug');
             return result.data;
         } catch (error) {
             this.logger?.log(`Monday.com API request failed: ${error.message}`, 'error');
@@ -109,63 +104,16 @@ class MondayClient {
         }
     }
 
-    async queryAllItemsInGroup(boardId, groupId) {
-        this.logger?.log(`Querying all items in group: ${groupId}`);
-
-        // Use the maximum allowed limit of 500
-        const query = `
-            query GetItems($boardId: ID!, $groupId: String!) {
-                boards(ids: [$boardId]) {
-                    groups(ids: [$groupId]) {
-                        id
-                        title
-                        items_page(limit: 500) {
-                            items {
-                                id
-                                name
-                                column_values {
-                                    id
-                                    value
-                                    text
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        `;
-
-        const variables = {
-            boardId,
-            groupId: String(groupId)
-        };
-
-        try {
-            const data = await this.makeRequest(query, variables);
-
-            if (data.boards && data.boards.length > 0 &&
-                data.boards[0].groups && data.boards[0].groups.length > 0 &&
-                data.boards[0].groups[0].items_page) {
-                const items = data.boards[0].groups[0].items_page.items || [];
-                this.logger?.log(`✅ Query returned ${items.length} items`);
-                return items;
-            }
-
-            this.logger?.log('Query returned no items');
-            return [];
-        } catch (error) {
-            this.logger?.log(`❌ Query failed: ${error.message}`, 'error');
-            throw error;
-        }
-    }
-
-    async queryItemsPaginated(boardId, groupId) {
+    async queryItemsPaginated(boardId, groupId, onProgress = null) {
         this.logger?.log(`Querying items with pagination: ${groupId}`);
+
+        // Use maximum page size of 500 for maximum performance
+        const pageSize = 500;
+        const maxPages = 20; // 500 * 20 = 10,000 items max (should be plenty)
 
         let allItems = [];
         let cursor = null;
         let page = 1;
-        const pageSize = 100; // Safe page size
 
         while (true) {
             const query = cursor ? `
@@ -227,6 +175,19 @@ class MondayClient {
 
                 this.logger?.log(`Page ${page}: ${pageItems.length} items (Total: ${allItems.length})`);
 
+                // Call progress callback immediately
+                if (onProgress && typeof onProgress === 'function') {
+                    try {
+                        // Use microtask for immediate UI update
+                        Promise.resolve().then(() => {
+                            onProgress(allItems.length, pageItems.length, page);
+                        });
+                    } catch (progressError) {
+                        this.logger?.log(`Progress callback error: ${progressError.message}`, 'warn');
+                    }
+                }
+
+                // Check if we should continue
                 if (!itemsPage.cursor || pageItems.length < pageSize) {
                     break;
                 }
@@ -234,13 +195,15 @@ class MondayClient {
                 cursor = itemsPage.cursor;
                 page++;
 
-                if (page > 10) { // Safety limit
-                    this.logger?.log('Reached safety limit of 10 pages', 'warn');
+                if (page > maxPages) {
+                    this.logger?.log(`Reached safety limit of ${maxPages} pages (${maxPages * pageSize} items)`, 'warn');
                     break;
                 }
 
-                // Small delay to avoid rate limiting
-                await new Promise(resolve => setTimeout(resolve, 100));
+                // Minimal delay of 1ms between requests for maximum speed
+                if (page > 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1));
+                }
             } catch (error) {
                 this.logger?.log(`Error in paginated query page ${page}: ${error.message}`, 'error');
                 throw error;
@@ -249,6 +212,57 @@ class MondayClient {
 
         this.logger?.log(`✅ Paginated query completed: ${allItems.length} total items`);
         return allItems;
+    }
+
+    // Alternative method: Try to get all items in one request if possible
+    async queryAllItemsDirect(boardId, groupId, onProgress = null) {
+        this.logger?.log(`Attempting direct query for all items in group: ${groupId}`);
+
+        try {
+            const query = `
+                query GetAllItems($boardId: ID!, $groupId: String!) {
+                    boards(ids: [$boardId]) {
+                        groups(ids: [$groupId]) {
+                            items_page(limit: 500) {
+                                items {
+                                    id
+                                    name
+                                    column_values {
+                                        id
+                                        value
+                                        text
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            `;
+
+            const variables = { boardId, groupId: String(groupId) };
+            const data = await this.makeRequest(query, variables);
+
+            if (data.boards && data.boards.length > 0 &&
+                data.boards[0].groups && data.boards[0].groups.length > 0 &&
+                data.boards[0].groups[0].items_page) {
+
+                const items = data.boards[0].groups[0].items_page.items || [];
+                this.logger?.log(`✅ Direct query successful: ${items.length} items`);
+
+                if (onProgress && typeof onProgress === 'function') {
+                    Promise.resolve().then(() => {
+                        onProgress(items.length, items.length, 1);
+                    });
+                }
+
+                return items;
+            }
+
+            return [];
+        } catch (error) {
+            this.logger?.log(`Direct query failed: ${error.message}`, 'warn');
+            throw error;
+        }
     }
 
     async createItem(boardId, groupId, itemName, columnValues) {
@@ -283,12 +297,13 @@ class MondayClient {
         }
     }
 
-    async updateItem(itemId, columnValues) {
+    async updateItem(itemId, columnValues, boardId = '6500270039') {
         this.logger?.log(`Updating item: ${itemId}`);
         const query = `
-            mutation UpdateItem($itemId: ID!, $columnValues: JSON!) {
+            mutation UpdateItem($itemId: ID!, $boardId: ID!, $columnValues: JSON!) {
                 change_multiple_column_values(
                     item_id: $itemId,
+                    board_id: $boardId,
                     column_values: $columnValues
                 ) {
                     id
@@ -298,6 +313,7 @@ class MondayClient {
 
         const variables = {
             itemId,
+            boardId,
             columnValues
         };
 

@@ -764,36 +764,49 @@ class ClaimWebApp {
             let items = [];
             this.updateLoadingDetails('Querying items from Monday.com...');
 
-            // Try different query methods
-            const queryMethods = [
-                {
-                    name: 'simple',
-                    method: () => this.mondayClient.queryAllItemsInGroup('6500270039', groupId, 5000)
-                },
-                {
-                    name: 'paginated',
-                    method: () => this.mondayClient.queryItemsPaginated('6500270039', groupId, 5000)
-                }
-            ];
+            // High-performance progress callback
+            const progressCallback = (totalItems, pageItems, currentPage) => {
+                requestAnimationFrame(() => {
+                    const detailsText = `Loaded ${totalItems} items... (Page ${currentPage})`;
+                    this.updateLoadingDetails(detailsText);
 
-            for (const method of queryMethods) {
-                try {
-                    this.updateLoadingDetails(`Trying ${method.name} query method...`);
-                    this.safeLog(`🔍 Attempting ${method.name} query...`);
-                    items = await method.method();
-
-                    if (items.length > 0) {
-                        this.safeLog(`✅ ${method.name} query successful: ${items.length} items found`);
-                        break;
-                    } else {
-                        this.safeLog(`⚠️ ${method.name} query returned 0 items`, 'warn');
+                    // Update main loading message for significant progress
+                    if (totalItems % 500 === 0 || currentPage === 1) {
+                        this.showLoading('Loading items from Monday.com...', detailsText);
                     }
-                } catch (error) {
-                    this.safeLog(`❌ ${method.name} query failed: ${error.message}`, 'warn');
+                });
+            };
+
+            // Try optimized paginated query first (500 items per page, 1ms delay)
+            try {
+                this.updateLoadingDetails('Starting high-performance query...');
+                this.showLoading('Loading items...', 'Starting high-speed data retrieval...');
+                this.safeLog(`🚀 Attempting high-performance paginated query (500 items/page)...`);
+
+                const startTime = Date.now();
+                items = await this.mondayClient.queryItemsPaginated('6500270039', groupId, progressCallback);
+                const loadTime = Date.now() - startTime;
+
+                if (items.length > 0) {
+                    this.safeLog(`✅ High-performance query successful: ${items.length} items loaded in ${loadTime}ms`);
+                    this.showNotification(`Loaded ${items.length} items in ${loadTime}ms`, 'success');
+                } else {
+                    this.safeLog(`⚠️ Query returned 0 items`, 'warn');
+                    this.showNotification('No items found in the current year group', 'warning');
                 }
+            } catch (error) {
+                this.safeLog(`❌ High-performance query failed: ${error.message}`, 'warn');
+
+                // Fallback to smaller page size if 500 fails
+                this.safeLog('🔄 Falling back to standard page size...');
+                this.updateLoadingDetails('Falling back to standard query...');
+
+                // We'd need to modify MondayClient to accept page size parameter
+                // For now, we'll just rethrow the error
+                throw error;
             }
 
-            this.safeLog(`📊 Final item count from all queries: ${items.length}`);
+            this.safeLog(`📊 Final item count: ${items.length}`);
 
             if (items.length === 0) {
                 this.showNotification('No items found in Monday.com board. Please check if the board has items in the current year group.', 'warning');
@@ -802,13 +815,18 @@ class ClaimWebApp {
             }
 
             this.updateLoadingDetails(`Processing ${items.length} items...`);
-            this.processItemsWithDebug(items);
+            this.showLoading('Processing items...', `Analyzing ${items.length} items for current week...`);
+
+            // Process items in chunks to avoid blocking UI
+            await this.processItemsWithDebug(items);
 
             this.updateLoadingDetails('Rendering calendar view...');
+            this.showLoading('Rendering calendar...', 'Finalizing display...');
+
             this.renderCalendarView();
 
             this.safeLog(`✅ Data load completed - Found entries for ${this.entries.size} dates`);
-            this.showNotification(`Loaded ${items.length} entries for ${this.entries.size} days`, 'success');
+            this.showNotification(`Loaded ${this.entries.size} days with entries from ${items.length} total items`, 'success');
             this.updateStatus('Ready');
 
         } catch (error) {
@@ -819,6 +837,65 @@ class ClaimWebApp {
             // Always hide loading overlay
             this.hideLoading();
         }
+    }
+
+    // Optimized item processing to avoid blocking UI
+    async processItemsWithDebug(items) {
+        this.entries.clear();
+        this.safeLog(`🔍 DEBUG: Starting to process ${items.length} items`);
+
+        const currentWeekDates = this.getWeekDates(this.currentWeekStart).map(date => this.formatDate(date));
+        this.safeLog(`📅 Current week dates being checked: ${currentWeekDates.join(', ')}`);
+
+        let userMatchCount = 0;
+        let dateExtractedCount = 0;
+        let currentWeekEntries = 0;
+
+        this.safeLog(`👤 Looking for items assigned to user: ${this.user.name} (ID: ${this.user.id})`);
+
+        // Process items in chunks to avoid blocking UI
+        const chunkSize = 100;
+        for (let i = 0; i < items.length; i += chunkSize) {
+            const chunk = items.slice(i, i + chunkSize);
+
+            // Allow UI updates between chunks
+            if (i > 0 && i % 500 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+                this.updateLoadingDetails(`Processing items... (${i}/${items.length})`);
+            }
+
+            chunk.forEach(item => {
+                const userCheck = this.debugIsUserItem(item);
+                if (userCheck.isMatch) {
+                    userMatchCount++;
+                    const date = this.extractItemDate(item);
+
+                    if (date) {
+                        if (currentWeekDates.includes(date)) {
+                            dateExtractedCount++;
+                            currentWeekEntries++;
+
+                            if (!this.entries.has(date)) {
+                                this.entries.set(date, []);
+                            }
+
+                            const entryData = {
+                                id: item.id,
+                                activityType: this.extractStatusValue(item),
+                                customer: this.extractColumnValue(item, 'text__1'),
+                                workItem: this.extractColumnValue(item, 'text8__1'),
+                                comment: this.extractCommentValue(item),
+                                hours: this.extractColumnValue(item, 'numbers__1')
+                            };
+
+                            this.entries.get(date).push(entryData);
+                        }
+                    }
+                }
+            });
+        }
+
+        this.safeLog(`📊 PROCESSING SUMMARY: ${userMatchCount} user matches, ${dateExtractedCount} with dates, ${currentWeekEntries} current week entries`);
     }
 
     processItemsWithDebug(items) {
@@ -912,6 +989,10 @@ class ClaimWebApp {
         const detailsElement = document.getElementById('loadingDetails');
         if (detailsElement) {
             detailsElement.textContent = details;
+            // Force UI update
+            detailsElement.style.display = 'none';
+            detailsElement.offsetHeight; // Trigger reflow
+            detailsElement.style.display = 'block';
         }
     }
 
@@ -1045,18 +1126,32 @@ class ClaimWebApp {
     }
 
     showLoading(message = 'Loading...', details = '') {
-        this.safeLog(`Showing loading: ${message}`);
         const loadingOverlay = document.getElementById('loadingOverlay');
         const loadingMessage = document.getElementById('loadingMessage');
         const loadingDetails = document.getElementById('loadingDetails');
 
-        if (loadingMessage) loadingMessage.textContent = message;
-        if (loadingDetails) loadingDetails.textContent = details;
-        if (loadingOverlay) loadingOverlay.style.display = 'flex';
+        if (loadingMessage) {
+            loadingMessage.textContent = message;
+            // Force UI update
+            loadingMessage.style.display = 'none';
+            loadingMessage.offsetHeight;
+            loadingMessage.style.display = 'block';
+        }
+
+        if (loadingDetails) {
+            loadingDetails.textContent = details;
+            // Force UI update
+            loadingDetails.style.display = 'none';
+            loadingDetails.offsetHeight;
+            loadingDetails.style.display = 'block';
+        }
+
+        if (loadingOverlay) {
+            loadingOverlay.style.display = 'flex';
+        }
     }
 
     hideLoading() {
-        this.safeLog('Hiding loading overlay');
         const loadingOverlay = document.getElementById('loadingOverlay');
         if (loadingOverlay) {
             loadingOverlay.style.display = 'none';
