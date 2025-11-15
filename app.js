@@ -15,11 +15,30 @@ class ClaimWebApp {
         this.expiredPairs = new Set(); // Set of "customer|workItem" strings
         this.loadCustomerWorkPairs();
 
+        // Data caching system
+        this.dataCache = {
+            items: [], // All items from Monday.com
+            lastUpdated: null,
+            currentYear: null,
+            cacheDuration: 5 * 60 * 1000, // 5 minutes cache
+            userData: new Map() // user -> { items, lastUpdated }
+        };
+
         // Autocomplete event handlers storage
         this.customerInputHandler = null;
         this.customerFocusHandler = null;
         this.workItemFocusHandler = null;
         this.suggestionsClickHandler = null;
+
+        // Loading progress tracking
+        this.loadingStats = {
+            totalItems: 0,
+            processedItems: 0,
+            currentPage: 0,
+            userMatches: 0,
+            currentWeekEntries: 0,
+            startTime: null
+        };
 
         // Wait for logger to be available
         if (typeof window.diagnosticLogger !== 'undefined') {
@@ -38,6 +57,35 @@ class ClaimWebApp {
         }
 
         this.initializeApp();
+    }
+
+    // Data caching methods
+    isCacheValid() {
+        if (!this.dataCache.lastUpdated) return false;
+        const now = Date.now();
+        return (now - this.dataCache.lastUpdated) < this.dataCache.cacheDuration;
+    }
+
+    getCachedData() {
+        if (this.isCacheValid() && this.dataCache.items.length > 0) {
+            this.safeLog(`✅ Using cached data (${this.dataCache.items.length} items from ${new Date(this.dataCache.lastUpdated).toLocaleTimeString()})`);
+            return this.dataCache.items;
+        }
+        return null;
+    }
+
+    setCachedData(items, year) {
+        this.dataCache.items = items;
+        this.dataCache.lastUpdated = Date.now();
+        this.dataCache.currentYear = year;
+        this.safeLog(`💾 Cached ${items.length} items for year ${year}`);
+    }
+
+    clearCache() {
+        this.dataCache.items = [];
+        this.dataCache.lastUpdated = null;
+        this.dataCache.currentYear = null;
+        this.safeLog('🧹 Cache cleared');
     }
 
     // Customer-work item memory methods
@@ -221,16 +269,30 @@ class ClaimWebApp {
         if (prevWeekBtn) prevWeekBtn.addEventListener('click', () => this.previousWeek());
         if (nextWeekBtn) nextWeekBtn.addEventListener('click', () => this.nextWeek());
         if (weekPicker) weekPicker.addEventListener('change', (e) => this.selectWeek(e.target.value));
-        if (queryDataBtn) queryDataBtn.addEventListener('click', () => this.loadData());
+        if (queryDataBtn) queryDataBtn.addEventListener('click', () => this.loadData(true)); // Force reload
 
         // Debug events
         const toggleDebugBtn = document.getElementById('toggleDebug');
         const forceLoadBtn = document.getElementById('forceLoad');
         const testConnectionBtn = document.getElementById('testConnection');
+        const clearCacheBtn = document.getElementById('clearCache');
 
         if (toggleDebugBtn) toggleDebugBtn.addEventListener('click', () => this.toggleDebug());
-        if (forceLoadBtn) forceLoadBtn.addEventListener('click', () => this.forceLoad());
+        if (forceLoadBtn) forceLoadBtn.addEventListener('click', () => this.loadData(true)); // Force reload
         if (testConnectionBtn) testConnectionBtn.addEventListener('click', () => this.testConnection());
+
+        // Add Clear Cache button to debug panel if it doesn't exist
+        if (!clearCacheBtn && document.querySelector('.debug-panel')) {
+            const debugPanel = document.querySelector('.debug-panel');
+            const clearCacheBtn = document.createElement('button');
+            clearCacheBtn.id = 'clearCache';
+            clearCacheBtn.className = 'btn-secondary';
+            clearCacheBtn.innerHTML = '<i class="fas fa-broom"></i> Clear Cache';
+            clearCacheBtn.addEventListener('click', () => this.clearCache());
+            debugPanel.appendChild(clearCacheBtn);
+        } else if (clearCacheBtn) {
+            clearCacheBtn.addEventListener('click', () => this.clearCache());
+        }
 
         // Modal events
         const closeModalBtn = document.querySelector('.close-modal');
@@ -331,7 +393,7 @@ class ClaimWebApp {
 
     forceLoad() {
         this.safeLog('Force loading data...');
-        this.loadData();
+        this.loadData(true);
     }
 
     getMonday(date) {
@@ -745,12 +807,15 @@ class ClaimWebApp {
 
             this.showNotification('Entry saved successfully!', 'success');
 
+            // Invalidate cache since we added new data
+            this.clearCache();
+
             if (addAnother) {
                 const customerInput = document.getElementById('customer');
                 if (customerInput) customerInput.focus();
             } else {
                 this.closeModal();
-                await this.loadData();
+                await this.loadData(false); // Use cache if available
             }
         } catch (error) {
             this.showNotification(`Failed to save entry: ${error.message}`, 'error');
@@ -812,8 +877,12 @@ class ClaimWebApp {
             );
 
             this.showNotification('Entry updated successfully!', 'success');
+
+            // Invalidate cache since we modified data
+            this.clearCache();
+
             this.closeModal();
-            await this.loadData();
+            await this.loadData(false); // Use cache if available
         } catch (error) {
             this.showNotification(`Failed to update entry: ${error.message}`, 'error');
             this.safeLog(`Update entry failed: ${error.message}`, 'error');
@@ -867,7 +936,7 @@ class ClaimWebApp {
             if (userEmail) userEmail.textContent = `Email: ${this.user.email}`;
             if (currentYear) currentYear.textContent = `Year: ${new Date().getFullYear()}`;
 
-            await this.loadData();
+            await this.loadData(false); // Use cache if available
         } catch (error) {
             this.showNotification(`Failed to validate API key: ${error.message}`, 'error');
             this.safeLog(`API Key validation failed: ${error.message}`, 'error');
@@ -884,8 +953,8 @@ class ClaimWebApp {
         }
     }
 
-    async loadData() {
-        this.safeLog('Starting loadData...');
+    async loadData(forceReload = false) {
+        this.safeLog(`Starting loadData (forceReload: ${forceReload})...`);
 
         if (!this.user) {
             this.safeLog('No user found - cannot load data', 'warn');
@@ -893,6 +962,29 @@ class ClaimWebApp {
             this.hideLoading();
             return;
         }
+
+        // Check cache first unless force reload is requested
+        if (!forceReload) {
+            const cachedItems = this.getCachedData();
+            if (cachedItems) {
+                this.safeLog('🔄 Using cached data for fast week navigation');
+                this.updateStatus('Processing Cached Data', 'loading');
+                this.showLoading('Processing cached data...', 'Using previously loaded data...');
+
+                await this.processCachedData(cachedItems);
+                return;
+            }
+        }
+
+        // Reset loading stats
+        this.loadingStats = {
+            totalItems: 0,
+            processedItems: 0,
+            currentPage: 0,
+            userMatches: 0,
+            currentWeekEntries: 0,
+            startTime: Date.now()
+        };
 
         this.updateStatus('Loading Data', 'loading');
         this.showLoading('Loading weekly entries...', 'Initializing data fetch...');
@@ -920,15 +1012,32 @@ class ClaimWebApp {
             let items = [];
             this.updateLoadingDetails('Querying items from Monday.com...');
 
-            // High-performance progress callback
+            // Enhanced progress callback with detailed statistics
             const progressCallback = (totalItems, pageItems, currentPage) => {
+                this.loadingStats.totalItems = totalItems;
+                this.loadingStats.currentPage = currentPage;
+
                 requestAnimationFrame(() => {
-                    const detailsText = `Loaded ${totalItems} items... (Page ${currentPage})`;
+                    const elapsedTime = ((Date.now() - this.loadingStats.startTime) / 1000).toFixed(1);
+                    const itemsPerSecond = (totalItems / elapsedTime).toFixed(1);
+
+                    const detailsText = `
+                        <div style="text-align: left; line-height: 1.6;">
+                            <div><strong>Database Scan Progress</strong></div>
+                            <div>📊 Total Items Loaded: <strong>${totalItems.toLocaleString()}</strong></div>
+                            <div>📄 Current Page: <strong>${currentPage}</strong></div>
+                            <div>⏱️ Elapsed Time: <strong>${elapsedTime}s</strong></div>
+                            <div>🚀 Speed: <strong>${itemsPerSecond} items/sec</strong></div>
+                            <div style="margin-top: 8px; font-size: 12px; color: #666;">
+                                Scanning database entries for your weekly data...
+                            </div>
+                        </div>
+                    `;
                     this.updateLoadingDetails(detailsText);
 
                     // Update main loading message for significant progress
                     if (totalItems % 500 === 0 || currentPage === 1) {
-                        this.showLoading('Loading items from Monday.com...', detailsText);
+                        this.showLoading('Scanning Monday.com database...', detailsText);
                     }
                 });
             };
@@ -936,7 +1045,17 @@ class ClaimWebApp {
             // Try optimized paginated query first (500 items per page, 1ms delay)
             try {
                 this.updateLoadingDetails('Starting high-performance query...');
-                this.showLoading('Loading items...', 'Starting high-speed data retrieval...');
+                this.showLoading('Initializing database scan...', `
+                    <div style="text-align: left; line-height: 1.6;">
+                        <div><strong>Starting Database Scan</strong></div>
+                        <div>🔍 Preparing to scan Monday.com database...</div>
+                        <div>👤 User: ${this.user.name}</div>
+                        <div>📅 Year: ${currentYear}</div>
+                        <div style="margin-top: 8px; font-size: 12px; color: #666;">
+                            This may take a moment depending on the number of entries in the database.
+                        </div>
+                    </div>
+                `);
                 this.safeLog(`🚀 Attempting high-performance paginated query (500 items/page)...`);
 
                 const startTime = Date.now();
@@ -946,19 +1065,15 @@ class ClaimWebApp {
                 if (items.length > 0) {
                     this.safeLog(`✅ High-performance query successful: ${items.length} items loaded in ${loadTime}ms`);
                     this.showNotification(`Loaded ${items.length} items in ${loadTime}ms`, 'success');
+
+                    // Cache the data for future use
+                    this.setCachedData(items, currentYear);
                 } else {
                     this.safeLog(`⚠️ Query returned 0 items`, 'warn');
                     this.showNotification('No items found in the current year group', 'warning');
                 }
             } catch (error) {
                 this.safeLog(`❌ High-performance query failed: ${error.message}`, 'warn');
-
-                // Fallback to smaller page size if 500 fails
-                this.safeLog('🔄 Falling back to standard page size...');
-                this.updateLoadingDetails('Falling back to standard query...');
-
-                // We'd need to modify MondayClient to accept page size parameter
-                // For now, we'll just rethrow the error
                 throw error;
             }
 
@@ -970,19 +1085,39 @@ class ClaimWebApp {
                 return;
             }
 
-            this.updateLoadingDetails(`Processing ${items.length} items...`);
+            this.updateLoadingDetails(`
+                <div style="text-align: left; line-height: 1.6;">
+                    <div><strong>Processing ${items.length.toLocaleString()} Items</strong></div>
+                    <div>✅ Database scan complete</div>
+                    <div>🔍 Now analyzing items for current week...</div>
+                    <div style="margin-top: 8px; font-size: 12px; color: #666;">
+                        Filtering and processing entries for your calendar view.
+                    </div>
+                </div>
+            `);
             this.showLoading('Processing items...', `Analyzing ${items.length} items for current week...`);
 
-            // Process items in chunks to avoid blocking UI
+            // Process items
             await this.processItemsWithDebug(items);
 
-            this.updateLoadingDetails('Rendering calendar view...');
+            this.updateLoadingDetails(`
+                <div style="text-align: left; line-height: 1.6;">
+                    <div><strong>Processing Complete</strong></div>
+                    <div>✅ Found ${this.loadingStats.userMatches} user entries</div>
+                    <div>📅 ${this.loadingStats.currentWeekEntries} entries in current week</div>
+                    <div>💡 Learned ${this.customerWorkPairs.size} customer-work pairs</div>
+                    <div style="margin-top: 8px; font-size: 12px; color: #666;">
+                        Finalizing calendar display...
+                    </div>
+                </div>
+            `);
             this.showLoading('Rendering calendar...', 'Finalizing display...');
 
             this.renderCalendarView();
 
-            this.safeLog(`✅ Data load completed - Found entries for ${this.entries.size} dates`);
-            this.showNotification(`Loaded ${this.entries.size} days with entries from ${items.length} total items`, 'success');
+            const totalTime = ((Date.now() - this.loadingStats.startTime) / 1000).toFixed(1);
+            this.safeLog(`✅ Data load completed in ${totalTime}s - Found entries for ${this.entries.size} dates`);
+            this.showNotification(`Loaded ${this.entries.size} days with entries from ${items.length} total items in ${totalTime}s`, 'success');
             this.updateStatus('Ready');
 
         } catch (error) {
@@ -995,8 +1130,31 @@ class ClaimWebApp {
         }
     }
 
-    // Enhanced processItems to learn from existing entries
-    processItemsWithDebug(items) {
+    // Process cached data (fast path for week navigation)
+    async processCachedData(cachedItems) {
+        this.safeLog(`🔄 Processing ${cachedItems.length} cached items for week navigation`);
+
+        this.loadingStats = {
+            totalItems: cachedItems.length,
+            processedItems: 0,
+            currentPage: 0,
+            userMatches: 0,
+            currentWeekEntries: 0,
+            startTime: Date.now()
+        };
+
+        await this.processItemsWithDebug(cachedItems);
+
+        this.renderCalendarView();
+
+        const processTime = ((Date.now() - this.loadingStats.startTime) / 1000).toFixed(2);
+        this.safeLog(`✅ Cached data processed in ${processTime}s - Found ${this.entries.size} days with entries`);
+        this.showNotification(`Week navigation completed in ${processTime}s (using cached data)`, 'success');
+        this.updateStatus('Ready');
+    }
+
+    // Enhanced processItems to learn from existing entries and track progress
+    async processItemsWithDebug(items) {
         this.entries.clear();
         this.safeLog(`🔍 DEBUG: Starting to process ${items.length} items`);
 
@@ -1014,23 +1172,43 @@ class ClaimWebApp {
         for (let i = 0; i < items.length; i += chunkSize) {
             const chunk = items.slice(i, i + chunkSize);
 
+            // Update progress UI
+            this.loadingStats.processedItems = i + chunk.length;
+            const progressPercent = Math.min(100, Math.round((this.loadingStats.processedItems / items.length) * 100));
+
+            requestAnimationFrame(() => {
+                this.updateLoadingDetails(`
+                    <div style="text-align: left; line-height: 1.6;">
+                        <div><strong>Processing Items: ${progressPercent}%</strong></div>
+                        <div>📊 Processed: <strong>${this.loadingStats.processedItems.toLocaleString()}</strong> of <strong>${items.length.toLocaleString()}</strong> items</div>
+                        <div>✅ User Matches: <strong>${userMatchCount}</strong></div>
+                        <div>📅 Current Week Entries: <strong>${currentWeekEntries}</strong></div>
+                        <div style="margin-top: 8px; font-size: 12px; color: #666;">
+                            Analyzing each entry for date and user assignment...
+                        </div>
+                    </div>
+                `);
+            });
+
             // Allow UI updates between chunks
             if (i > 0 && i % 500 === 0) {
-                setTimeout(() => {
-                    this.updateLoadingDetails(`Processing items... (${i}/${items.length})`);
-                }, 0);
+                // Use setTimeout to yield to the UI thread
+                await new Promise(resolve => setTimeout(resolve, 0));
             }
 
             chunk.forEach(item => {
                 const userCheck = this.debugIsUserItem(item);
                 if (userCheck.isMatch) {
                     userMatchCount++;
+                    this.loadingStats.userMatches = userMatchCount;
+
                     const date = this.extractItemDate(item);
 
                     if (date) {
                         if (currentWeekDates.includes(date)) {
                             dateExtractedCount++;
                             currentWeekEntries++;
+                            this.loadingStats.currentWeekEntries = currentWeekEntries;
 
                             if (!this.entries.has(date)) {
                                 this.entries.set(date, []);
@@ -1103,7 +1281,7 @@ class ClaimWebApp {
     updateLoadingDetails(details) {
         const detailsElement = document.getElementById('loadingDetails');
         if (detailsElement) {
-            detailsElement.textContent = details;
+            detailsElement.innerHTML = details;
             // Force UI update
             detailsElement.style.display = 'none';
             detailsElement.offsetHeight; // Trigger reflow
@@ -1225,19 +1403,19 @@ class ClaimWebApp {
     previousWeek() {
         this.currentWeekStart.setDate(this.currentWeekStart.getDate() - 7);
         this.renderCalendarView();
-        this.loadData();
+        this.loadData(false); // Use cache for fast navigation
     }
 
     nextWeek() {
         this.currentWeekStart.setDate(this.currentWeekStart.getDate() + 7);
         this.renderCalendarView();
-        this.loadData();
+        this.loadData(false); // Use cache for fast navigation
     }
 
     selectWeek(dateString) {
         this.currentWeekStart = this.getMonday(new Date(dateString));
         this.renderCalendarView();
-        this.loadData();
+        this.loadData(false); // Use cache for fast navigation
     }
 
     showLoading(message = 'Loading...', details = '') {
@@ -1254,7 +1432,7 @@ class ClaimWebApp {
         }
 
         if (loadingDetails) {
-            loadingDetails.textContent = details;
+            loadingDetails.innerHTML = details;
             // Force UI update
             loadingDetails.style.display = 'none';
             loadingDetails.offsetHeight;
@@ -1289,6 +1467,7 @@ class ClaimWebApp {
     // Autocomplete functionality
     initializeAutocomplete() {
         // This will be called when the modal opens
+        this.safeLog('Autocomplete system initialized');
     }
 
     setupFormAutocomplete() {
@@ -1652,7 +1831,7 @@ class ClaimWebApp {
 
         modal.innerHTML = `
             <div class="modal-content" style="background: white; padding: 20px; border-radius: 8px; max-width: 500px;">
-                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <div class="modal-header" style="display: flex; justify-content: between; align-items: center; margin-bottom: 20px;">
                     <h3>Edit Customer-Work Pair</h3>
                     <button class="close-edit-modal" style="background: none; border: none; font-size: 24px; cursor: pointer;">&times;</button>
                 </div>
