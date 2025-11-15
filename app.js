@@ -139,6 +139,25 @@ class ClaimWebApp {
         return pairs.sort((a, b) => a.customer.localeCompare(b.customer));
     }
 
+    getExpiredCustomerWorkPairs() {
+        const expiredPairs = [];
+        for (const pairKey of this.expiredPairs) {
+            const [customer, workItem] = pairKey.split('|');
+            expiredPairs.push({ customer, workItem });
+        }
+        return expiredPairs.sort((a, b) => a.customer.localeCompare(b.customer));
+    }
+
+    getAllCustomerWorkPairs() {
+        const allPairs = this.getCustomerWorkPairs();
+        const expiredPairs = this.getExpiredCustomerWorkPairs();
+        return {
+            active: allPairs,
+            expired: expiredPairs,
+            all: [...allPairs, ...expiredPairs]
+        };
+    }
+
     getCustomers() {
         return Array.from(this.customerWorkPairs.keys()).sort();
     }
@@ -1403,7 +1422,7 @@ class ClaimWebApp {
         }
     }
 
-    // Customer-work pairs management modal
+    // Enhanced Customer-work pairs management modal
     openCustomerWorkPairsModal() {
         const modal = document.createElement('div');
         modal.className = 'modal';
@@ -1420,37 +1439,97 @@ class ClaimWebApp {
             z-index: 1000;
         `;
 
-        const pairs = this.getCustomerWorkPairs();
+        const allPairs = this.getAllCustomerWorkPairs();
 
         modal.innerHTML = `
-            <div class="modal-content" style="background: white; padding: 20px; border-radius: 8px; max-width: 600px; max-height: 80vh; overflow-y: auto;">
+            <div class="modal-content" style="background: white; padding: 20px; border-radius: 8px; max-width: 800px; max-height: 90vh; overflow-y: auto;">
                 <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <h3>Manage Customer-Work Item Pairs</h3>
                     <button class="close-modal" style="background: none; border: none; font-size: 24px; cursor: pointer;">&times;</button>
                 </div>
+                
                 <div class="modal-body">
-                    <p>Found ${pairs.length} customer-work item pairs in memory.</p>
-                    <div style="margin: 15px 0;">
-                        <button id="exportPairs" class="btn-secondary" style="margin-right: 10px;">Export Pairs</button>
-                        <button id="importPairs" class="btn-secondary">Import Pairs</button>
-                        <input type="file" id="importFile" accept=".json" style="display: none;">
+                    <!-- Add New Pair Form -->
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                        <h4 style="margin-bottom: 10px;">Add New Customer-Work Pair</h4>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end;">
+                            <div>
+                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Customer</label>
+                                <input type="text" id="newCustomer" placeholder="Enter customer name" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                            </div>
+                            <div>
+                                <label style="display: block; margin-bottom: 5px; font-weight: 500;">Work Item</label>
+                                <input type="text" id="newWorkItem" placeholder="Enter work item" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                            </div>
+                            <div>
+                                <button id="addNewPair" class="btn-primary" style="padding: 8px 16px;">Add Pair</button>
+                            </div>
+                        </div>
                     </div>
-                    <div style="max-height: 400px; overflow-y: auto;">
-                        ${pairs.length > 0 ?
-                pairs.map(pair => `
-                                <div class="pair-item" style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #eee;">
-                                    <div>
-                                        <strong>${pair.customer}</strong> - ${pair.workItem}
+
+                    <!-- Management Controls -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <div>
+                            <span style="font-weight: 500;">Active: ${allPairs.active.length} | Expired: ${allPairs.expired.length}</span>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button id="exportPairs" class="btn-secondary">Export Pairs</button>
+                            <button id="importPairs" class="btn-secondary">Import Pairs</button>
+                            <input type="file" id="importFile" accept=".json" style="display: none;">
+                        </div>
+                    </div>
+
+                    <!-- Active Pairs Section -->
+                    <div style="margin-bottom: 30px;">
+                        <h4 style="color: #27ae60; margin-bottom: 10px;">Active Pairs (${allPairs.active.length})</h4>
+                        <div style="max-height: 300px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 5px;">
+                            ${allPairs.active.length > 0 ?
+                allPairs.active.map((pair, index) => `
+                                    <div class="pair-item" style="display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee; background: ${index % 2 === 0 ? '#f8f9fa' : 'white'};">
+                                        <div style="flex: 1;">
+                                            <strong>${pair.customer}</strong> - ${pair.workItem}
+                                        </div>
+                                        <div style="display: flex; gap: 5px;">
+                                            <button class="edit-pair btn-secondary" data-customer="${pair.customer}" data-workitem="${pair.workItem}" style="padding: 4px 8px; font-size: 12px;">
+                                                Edit
+                                            </button>
+                                            <button class="mark-expired btn-secondary" data-customer="${pair.customer}" data-workitem="${pair.workItem}" style="padding: 4px 8px; font-size: 12px;">
+                                                Mark Expired
+                                            </button>
+                                        </div>
                                     </div>
-                                    <button class="btn-secondary mark-expired" data-customer="${pair.customer}" data-workitem="${pair.workItem}" style="padding: 4px 8px; font-size: 12px;">
-                                        Mark Expired
-                                    </button>
-                                </div>
-                            `).join('') :
-                '<p style="text-align: center; color: #666; padding: 20px;">No customer-work item pairs found.</p>'
+                                `).join('') :
+                '<p style="text-align: center; color: #666; padding: 20px;">No active customer-work item pairs found.</p>'
             }
+                        </div>
+                    </div>
+
+                    <!-- Expired Pairs Section -->
+                    <div>
+                        <h4 style="color: #e74c3c; margin-bottom: 10px;">Expired Pairs (${allPairs.expired.length})</h4>
+                        <div style="max-height: 200px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 5px;">
+                            ${allPairs.expired.length > 0 ?
+                allPairs.expired.map((pair, index) => `
+                                    <div class="pair-item" style="display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee; background: ${index % 2 === 0 ? '#f8f9fa' : 'white'}; opacity: 0.7;">
+                                        <div style="flex: 1;">
+                                            <strong>${pair.customer}</strong> - ${pair.workItem}
+                                        </div>
+                                        <div style="display: flex; gap: 5px;">
+                                            <button class="unmark-expired btn-secondary" data-customer="${pair.customer}" data-workitem="${pair.workItem}" style="padding: 4px 8px; font-size: 12px;">
+                                                Reactivate
+                                            </button>
+                                            <button class="delete-pair btn-secondary" data-customer="${pair.customer}" data-workitem="${pair.workItem}" style="padding: 4px 8px; font-size: 12px; background: #e74c3c;">
+                                                Delete
+                                            </button>
+                                        </div>
+                                    </div>
+                                `).join('') :
+                '<p style="text-align: center; color: #666; padding: 20px;">No expired customer-work item pairs found.</p>'
+            }
+                        </div>
                     </div>
                 </div>
+
                 <div class="modal-footer" style="margin-top: 20px; text-align: right;">
                     <button id="closePairsModal" class="btn-primary">Close</button>
                 </div>
@@ -1460,10 +1539,33 @@ class ClaimWebApp {
         document.body.appendChild(modal);
 
         // Event handlers for the modal
-        modal.querySelector('.close-modal').addEventListener('click', () => modal.remove());
-        modal.querySelector('#closePairsModal').addEventListener('click', () => modal.remove());
+        const closeModal = () => modal.remove();
+        modal.querySelector('.close-modal').addEventListener('click', closeModal);
+        modal.querySelector('#closePairsModal').addEventListener('click', closeModal);
         modal.addEventListener('click', (e) => {
-            if (e.target === modal) modal.remove();
+            if (e.target === modal) closeModal();
+        });
+
+        // Add new pair functionality
+        modal.querySelector('#addNewPair').addEventListener('click', () => {
+            const newCustomer = modal.querySelector('#newCustomer').value.trim();
+            const newWorkItem = modal.querySelector('#newWorkItem').value.trim();
+
+            if (!newCustomer || !newWorkItem) {
+                this.showNotification('Please enter both customer and work item', 'error');
+                return;
+            }
+
+            this.addCustomerWorkPair(newCustomer, newWorkItem);
+            this.showNotification(`Added new pair: ${newCustomer} - ${newWorkItem}`, 'success');
+
+            // Clear inputs
+            modal.querySelector('#newCustomer').value = '';
+            modal.querySelector('#newWorkItem').value = '';
+
+            // Refresh the modal
+            closeModal();
+            this.openCustomerWorkPairsModal();
         });
 
         // Export functionality
@@ -1478,7 +1580,16 @@ class ClaimWebApp {
 
         modal.querySelector('#importFile').addEventListener('change', (e) => {
             this.importCustomerWorkPairs(e.target.files[0]);
-            modal.remove();
+            closeModal();
+        });
+
+        // Edit pair functionality
+        modal.querySelectorAll('.edit-pair').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const customer = e.target.getAttribute('data-customer');
+                const workItem = e.target.getAttribute('data-workitem');
+                this.openEditPairModal(customer, workItem, closeModal);
+            });
         });
 
         // Mark as expired functionality
@@ -1488,20 +1599,130 @@ class ClaimWebApp {
                 const workItem = e.target.getAttribute('data-workitem');
                 this.markPairAsExpired(customer, workItem);
                 this.showNotification(`Marked ${customer} - ${workItem} as expired`, 'success');
-                modal.remove();
-                this.openCustomerWorkPairsModal(); // Refresh the modal
+                closeModal();
+                this.openCustomerWorkPairsModal();
+            });
+        });
+
+        // Unmark as expired functionality
+        modal.querySelectorAll('.unmark-expired').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const customer = e.target.getAttribute('data-customer');
+                const workItem = e.target.getAttribute('data-workitem');
+                this.unmarkPairAsExpired(customer, workItem);
+                this.addCustomerWorkPair(customer, workItem);
+                this.showNotification(`Reactivated ${customer} - ${workItem}`, 'success');
+                closeModal();
+                this.openCustomerWorkPairsModal();
+            });
+        });
+
+        // Delete pair functionality
+        modal.querySelectorAll('.delete-pair').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const customer = e.target.getAttribute('data-customer');
+                const workItem = e.target.getAttribute('data-workitem');
+
+                if (confirm(`Are you sure you want to permanently delete the pair "${customer} - ${workItem}"?`)) {
+                    this.expiredPairs.delete(`${customer}|${workItem}`);
+                    this.saveCustomerWorkPairs();
+                    this.showNotification(`Deleted pair: ${customer} - ${workItem}`, 'success');
+                    closeModal();
+                    this.openCustomerWorkPairsModal();
+                }
             });
         });
     }
 
+    openEditPairModal(oldCustomer, oldWorkItem, onClose) {
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1001;
+        `;
+
+        modal.innerHTML = `
+            <div class="modal-content" style="background: white; padding: 20px; border-radius: 8px; max-width: 500px;">
+                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h3>Edit Customer-Work Pair</h3>
+                    <button class="close-edit-modal" style="background: none; border: none; font-size: 24px; cursor: pointer;">&times;</button>
+                </div>
+                
+                <div class="modal-body">
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: 500;">Customer</label>
+                        <input type="text" id="editCustomer" value="${oldCustomer}" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: block; margin-bottom: 5px; font-weight: 500;">Work Item</label>
+                        <input type="text" id="editWorkItem" value="${oldWorkItem}" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                    </div>
+                </div>
+
+                <div class="modal-footer" style="margin-top: 20px; text-align: right; display: flex; gap: 10px; justify-content: flex-end;">
+                    <button id="cancelEdit" class="btn-secondary">Cancel</button>
+                    <button id="saveEdit" class="btn-primary">Save Changes</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const closeEditModal = () => {
+            modal.remove();
+            onClose();
+            this.openCustomerWorkPairsModal();
+        };
+
+        modal.querySelector('.close-edit-modal').addEventListener('click', closeEditModal);
+        modal.querySelector('#cancelEdit').addEventListener('click', closeEditModal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeEditModal();
+        });
+
+        modal.querySelector('#saveEdit').addEventListener('click', () => {
+            const newCustomer = modal.querySelector('#editCustomer').value.trim();
+            const newWorkItem = modal.querySelector('#editWorkItem').value.trim();
+
+            if (!newCustomer || !newWorkItem) {
+                this.showNotification('Please enter both customer and work item', 'error');
+                return;
+            }
+
+            // Remove old pair
+            this.removeCustomerWorkPair(oldCustomer, oldWorkItem);
+            this.expiredPairs.delete(`${oldCustomer}|${oldWorkItem}`);
+
+            // Add new pair
+            this.addCustomerWorkPair(newCustomer, newWorkItem);
+
+            this.showNotification(`Updated pair: ${oldCustomer} - ${oldWorkItem} → ${newCustomer} - ${newWorkItem}`, 'success');
+            closeEditModal();
+        });
+    }
+
     exportCustomerWorkPairs() {
-        const pairs = this.getCustomerWorkPairs();
-        const data = JSON.stringify(pairs, null, 2);
+        const allPairs = this.getAllCustomerWorkPairs();
+        const data = JSON.stringify({
+            active: allPairs.active,
+            expired: allPairs.expired,
+            exportedAt: new Date().toISOString()
+        }, null, 2);
+
         const blob = new Blob([data], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'customer-work-pairs.json';
+        a.download = `customer-work-pairs-${new Date().toISOString().split('T')[0]}.json`;
         a.click();
         URL.revokeObjectURL(url);
         this.showNotification('Customer-work pairs exported successfully', 'success');
@@ -1513,19 +1734,31 @@ class ClaimWebApp {
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
-                const pairs = JSON.parse(e.target.result);
-                if (Array.isArray(pairs)) {
-                    pairs.forEach(pair => {
+                const data = JSON.parse(e.target.result);
+                let importedCount = 0;
+
+                if (data.active && Array.isArray(data.active)) {
+                    data.active.forEach(pair => {
                         if (pair.customer && pair.workItem) {
                             this.addCustomerWorkPair(pair.customer, pair.workItem);
+                            importedCount++;
                         }
                     });
-                    this.showNotification(`Imported ${pairs.length} customer-work pairs`, 'success');
-                } else {
-                    this.showNotification('Invalid file format', 'error');
                 }
+
+                if (data.expired && Array.isArray(data.expired)) {
+                    data.expired.forEach(pair => {
+                        if (pair.customer && pair.workItem) {
+                            this.expiredPairs.add(`${pair.customer}|${pair.workItem}`);
+                        }
+                    });
+                    this.saveCustomerWorkPairs();
+                }
+
+                this.showNotification(`Imported ${importedCount} customer-work pairs`, 'success');
+                this.openCustomerWorkPairsModal();
             } catch (error) {
-                this.showNotification('Failed to import file', 'error');
+                this.showNotification('Failed to import file - invalid format', 'error');
             }
         };
         reader.readAsText(file);
