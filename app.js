@@ -10,6 +10,17 @@ class ClaimWebApp {
         this.lastEntryData = {};
         this.responsivenessCheck = null;
 
+        // Customer-work item memory system
+        this.customerWorkPairs = new Map(); // customer -> Set(workItems)
+        this.expiredPairs = new Set(); // Set of "customer|workItem" strings
+        this.loadCustomerWorkPairs();
+
+        // Autocomplete event handlers storage
+        this.customerInputHandler = null;
+        this.customerFocusHandler = null;
+        this.workItemFocusHandler = null;
+        this.suggestionsClickHandler = null;
+
         // Wait for logger to be available
         if (typeof window.diagnosticLogger !== 'undefined') {
             this.logger = window.diagnosticLogger;
@@ -27,6 +38,116 @@ class ClaimWebApp {
         }
 
         this.initializeApp();
+    }
+
+    // Customer-work item memory methods
+    loadCustomerWorkPairs() {
+        try {
+            const stored = localStorage.getItem('customerWorkPairs');
+            const storedExpired = localStorage.getItem('expiredCustomerWorkPairs');
+
+            if (stored) {
+                const pairs = JSON.parse(stored);
+                this.customerWorkPairs = new Map(Object.entries(pairs).map(([customer, workItems]) =>
+                    [customer, new Set(workItems)]
+                ));
+            }
+
+            if (storedExpired) {
+                this.expiredPairs = new Set(JSON.parse(storedExpired));
+            }
+
+            this.safeLog(`Loaded ${this.customerWorkPairs.size} customer-work item pairs from memory`);
+        } catch (error) {
+            this.safeLog('Failed to load customer-work pairs from storage', 'warn');
+            this.customerWorkPairs = new Map();
+            this.expiredPairs = new Set();
+        }
+    }
+
+    saveCustomerWorkPairs() {
+        try {
+            const pairsObj = Object.fromEntries(
+                Array.from(this.customerWorkPairs.entries()).map(([customer, workItems]) =>
+                    [customer, Array.from(workItems)]
+                )
+            );
+            localStorage.setItem('customerWorkPairs', JSON.stringify(pairsObj));
+            localStorage.setItem('expiredCustomerWorkPairs', JSON.stringify(Array.from(this.expiredPairs)));
+        } catch (error) {
+            this.safeLog('Failed to save customer-work pairs to storage', 'warn');
+        }
+    }
+
+    addCustomerWorkPair(customer, workItem) {
+        if (!customer || !workItem || customer === 'null' || workItem === 'null') {
+            return;
+        }
+
+        const pairKey = `${customer}|${workItem}`;
+
+        // Skip if this pair is expired
+        if (this.expiredPairs.has(pairKey)) {
+            return;
+        }
+
+        if (!this.customerWorkPairs.has(customer)) {
+            this.customerWorkPairs.set(customer, new Set());
+        }
+
+        this.customerWorkPairs.get(customer).add(workItem);
+        this.saveCustomerWorkPairs();
+
+        this.safeLog(`Added customer-work pair: ${customer} - ${workItem}`);
+    }
+
+    removeCustomerWorkPair(customer, workItem) {
+        if (this.customerWorkPairs.has(customer)) {
+            this.customerWorkPairs.get(customer).delete(workItem);
+            if (this.customerWorkPairs.get(customer).size === 0) {
+                this.customerWorkPairs.delete(customer);
+            }
+            this.saveCustomerWorkPairs();
+        }
+    }
+
+    markPairAsExpired(customer, workItem) {
+        const pairKey = `${customer}|${workItem}`;
+        this.expiredPairs.add(pairKey);
+        this.removeCustomerWorkPair(customer, workItem);
+        this.saveCustomerWorkPairs();
+        this.safeLog(`Marked pair as expired: ${customer} - ${workItem}`);
+    }
+
+    unmarkPairAsExpired(customer, workItem) {
+        const pairKey = `${customer}|${workItem}`;
+        this.expiredPairs.delete(pairKey);
+        this.saveCustomerWorkPairs();
+        this.safeLog(`Unmarked pair as expired: ${customer} - ${workItem}`);
+    }
+
+    getCustomerWorkPairs() {
+        const pairs = [];
+        for (const [customer, workItems] of this.customerWorkPairs.entries()) {
+            for (const workItem of workItems) {
+                const pairKey = `${customer}|${workItem}`;
+                if (!this.expiredPairs.has(pairKey)) {
+                    pairs.push({ customer, workItem });
+                }
+            }
+        }
+        return pairs.sort((a, b) => a.customer.localeCompare(b.customer));
+    }
+
+    getCustomers() {
+        return Array.from(this.customerWorkPairs.keys()).sort();
+    }
+
+    getWorkItemsForCustomer(customer) {
+        if (this.customerWorkPairs.has(customer)) {
+            return Array.from(this.customerWorkPairs.get(customer)).sort();
+        }
+        return [];
     }
 
     initializeApp() {
@@ -112,6 +233,12 @@ class ClaimWebApp {
         if (addMultipleBtn) addMultipleBtn.addEventListener('click', () => this.openMultiEntryModal());
         if (clearAllBtn) clearAllBtn.addEventListener('click', () => this.clearAllEntries());
 
+        // Customer-work pair management
+        const managePairsBtn = document.getElementById('managePairs');
+        if (managePairsBtn) {
+            managePairsBtn.addEventListener('click', () => this.openCustomerWorkPairsModal());
+        }
+
         // Activity type selection
         document.querySelectorAll('.activity-item').forEach(item => {
             item.addEventListener('click', (e) => {
@@ -130,6 +257,9 @@ class ClaimWebApp {
                 }
             });
         }
+
+        // Initialize autocomplete for customer and work item fields
+        this.initializeAutocomplete();
 
         this.safeLog('✅ All events bound successfully');
     }
@@ -405,6 +535,9 @@ class ClaimWebApp {
 
         this.fillFormWithData(this.lastEntryData);
 
+        // Setup autocomplete for the form
+        this.setupFormAutocomplete();
+
         if (modal) modal.style.display = 'block';
     }
 
@@ -522,6 +655,7 @@ class ClaimWebApp {
         this.currentEditingDate = null;
         this.currentEditingEntry = null;
         this.isEditing = false;
+        this.hideSuggestions();
     }
 
     async saveEntry(addAnother = false) {
@@ -552,6 +686,9 @@ class ClaimWebApp {
         };
 
         this.lastEntryData = { ...entry };
+
+        // Learn from this new entry
+        this.addCustomerWorkPair(entry.customer, entry.workItem);
 
         if (!this.user) {
             this.showNotification('Please save your API key first', 'warning');
@@ -839,8 +976,8 @@ class ClaimWebApp {
         }
     }
 
-    // Optimized item processing to avoid blocking UI
-    async processItemsWithDebug(items) {
+    // Enhanced processItems to learn from existing entries
+    processItemsWithDebug(items) {
         this.entries.clear();
         this.safeLog(`🔍 DEBUG: Starting to process ${items.length} items`);
 
@@ -860,8 +997,9 @@ class ClaimWebApp {
 
             // Allow UI updates between chunks
             if (i > 0 && i % 500 === 0) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-                this.updateLoadingDetails(`Processing items... (${i}/${items.length})`);
+                setTimeout(() => {
+                    this.updateLoadingDetails(`Processing items... (${i}/${items.length})`);
+                }, 0);
             }
 
             chunk.forEach(item => {
@@ -889,6 +1027,9 @@ class ClaimWebApp {
                             };
 
                             this.entries.get(date).push(entryData);
+
+                            // Learn from this entry - add to customer-work pairs
+                            this.addCustomerWorkPair(entryData.customer, entryData.workItem);
                         }
                     }
                 }
@@ -896,52 +1037,7 @@ class ClaimWebApp {
         }
 
         this.safeLog(`📊 PROCESSING SUMMARY: ${userMatchCount} user matches, ${dateExtractedCount} with dates, ${currentWeekEntries} current week entries`);
-    }
-
-    processItemsWithDebug(items) {
-        this.entries.clear();
-        this.safeLog(`🔍 DEBUG: Starting to process ${items.length} items`);
-
-        const currentWeekDates = this.getWeekDates(this.currentWeekStart).map(date => this.formatDate(date));
-        this.safeLog(`📅 Current week dates being checked: ${currentWeekDates.join(', ')}`);
-
-        let userMatchCount = 0;
-        let dateExtractedCount = 0;
-        let currentWeekEntries = 0;
-
-        this.safeLog(`👤 Looking for items assigned to user: ${this.user.name} (ID: ${this.user.id})`);
-
-        items.forEach((item, index) => {
-            const userCheck = this.debugIsUserItem(item);
-            if (userCheck.isMatch) {
-                userMatchCount++;
-                const date = this.extractItemDate(item);
-
-                if (date) {
-                    if (currentWeekDates.includes(date)) {
-                        dateExtractedCount++;
-                        currentWeekEntries++;
-
-                        if (!this.entries.has(date)) {
-                            this.entries.set(date, []);
-                        }
-
-                        const entryData = {
-                            id: item.id,
-                            activityType: this.extractStatusValue(item),
-                            customer: this.extractColumnValue(item, 'text__1'),
-                            workItem: this.extractColumnValue(item, 'text8__1'),
-                            comment: this.extractCommentValue(item),
-                            hours: this.extractColumnValue(item, 'numbers__1')
-                        };
-
-                        this.entries.get(date).push(entryData);
-                    }
-                }
-            }
-        });
-
-        this.safeLog(`📊 PROCESSING SUMMARY: ${userMatchCount} user matches, ${dateExtractedCount} with dates, ${currentWeekEntries} current week entries`);
+        this.safeLog(`💡 Learned ${this.customerWorkPairs.size} customer-work item pairs from data`);
     }
 
     debugIsUserItem(item) {
@@ -1169,6 +1265,270 @@ class ClaimWebApp {
         setTimeout(() => {
             notification.classList.add('hidden');
         }, 5000);
+    }
+
+    // Autocomplete functionality
+    initializeAutocomplete() {
+        // This will be called when the modal opens
+    }
+
+    setupFormAutocomplete() {
+        const customerInput = document.getElementById('customer');
+        const workItemInput = document.getElementById('workItem');
+
+        if (customerInput) {
+            // Clear previous event listeners
+            customerInput.removeEventListener('input', this.customerInputHandler);
+            customerInput.removeEventListener('focus', this.customerFocusHandler);
+
+            this.customerInputHandler = (e) => this.handleCustomerInput(e);
+            this.customerFocusHandler = () => this.showCustomerSuggestions();
+
+            customerInput.addEventListener('input', this.customerInputHandler);
+            customerInput.addEventListener('focus', this.customerFocusHandler);
+        }
+
+        if (workItemInput) {
+            workItemInput.removeEventListener('focus', this.workItemFocusHandler);
+            this.workItemFocusHandler = () => this.showWorkItemSuggestions();
+            workItemInput.addEventListener('focus', this.workItemFocusHandler);
+        }
+    }
+
+    handleCustomerInput(e) {
+        const customer = e.target.value.trim();
+        if (customer.length > 1) {
+            this.showCustomerSuggestions();
+        } else {
+            this.hideSuggestions();
+        }
+    }
+
+    showCustomerSuggestions() {
+        const customerInput = document.getElementById('customer');
+        if (!customerInput) return;
+
+        const customers = this.getCustomers();
+        const filtered = customers.filter(c =>
+            c.toLowerCase().includes(customerInput.value.toLowerCase())
+        );
+
+        this.showSuggestions(customerInput, filtered, (selectedCustomer) => {
+            customerInput.value = selectedCustomer;
+            this.showWorkItemSuggestions();
+        });
+    }
+
+    showWorkItemSuggestions() {
+        const customerInput = document.getElementById('customer');
+        const workItemInput = document.getElementById('workItem');
+        if (!customerInput || !workItemInput) return;
+
+        const customer = customerInput.value.trim();
+        if (!customer) return;
+
+        const workItems = this.getWorkItemsForCustomer(customer);
+        const filtered = workItems.filter(w =>
+            w.toLowerCase().includes(workItemInput.value.toLowerCase())
+        );
+
+        this.showSuggestions(workItemInput, filtered, (selectedWorkItem) => {
+            workItemInput.value = selectedWorkItem;
+        });
+    }
+
+    showSuggestions(inputElement, suggestions, onSelect) {
+        this.hideSuggestions();
+
+        if (suggestions.length === 0) return;
+
+        const suggestionsDiv = document.createElement('div');
+        suggestionsDiv.className = 'autocomplete-suggestions';
+        suggestionsDiv.style.cssText = `
+            position: absolute;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            width: ${inputElement.offsetWidth}px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        `;
+
+        suggestions.forEach(suggestion => {
+            const suggestionItem = document.createElement('div');
+            suggestionItem.textContent = suggestion;
+            suggestionItem.style.cssText = `
+                padding: 8px 12px;
+                cursor: pointer;
+                border-bottom: 1px solid #f0f0f0;
+            `;
+            suggestionItem.addEventListener('mouseenter', () => {
+                suggestionItem.style.background = '#f0f0f0';
+            });
+            suggestionItem.addEventListener('mouseleave', () => {
+                suggestionItem.style.background = 'white';
+            });
+            suggestionItem.addEventListener('click', () => {
+                onSelect(suggestion);
+                this.hideSuggestions();
+            });
+            suggestionsDiv.appendChild(suggestionItem);
+        });
+
+        const rect = inputElement.getBoundingClientRect();
+        suggestionsDiv.style.top = `${rect.bottom + window.scrollY}px`;
+        suggestionsDiv.style.left = `${rect.left + window.scrollX}px`;
+
+        document.body.appendChild(suggestionsDiv);
+
+        // Close suggestions when clicking outside
+        this.suggestionsClickHandler = (e) => {
+            if (!suggestionsDiv.contains(e.target) && e.target !== inputElement) {
+                this.hideSuggestions();
+            }
+        };
+        document.addEventListener('click', this.suggestionsClickHandler);
+    }
+
+    hideSuggestions() {
+        const existing = document.querySelector('.autocomplete-suggestions');
+        if (existing) {
+            existing.remove();
+        }
+        if (this.suggestionsClickHandler) {
+            document.removeEventListener('click', this.suggestionsClickHandler);
+            this.suggestionsClickHandler = null;
+        }
+    }
+
+    // Customer-work pairs management modal
+    openCustomerWorkPairsModal() {
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        `;
+
+        const pairs = this.getCustomerWorkPairs();
+
+        modal.innerHTML = `
+            <div class="modal-content" style="background: white; padding: 20px; border-radius: 8px; max-width: 600px; max-height: 80vh; overflow-y: auto;">
+                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h3>Manage Customer-Work Item Pairs</h3>
+                    <button class="close-modal" style="background: none; border: none; font-size: 24px; cursor: pointer;">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p>Found ${pairs.length} customer-work item pairs in memory.</p>
+                    <div style="margin: 15px 0;">
+                        <button id="exportPairs" class="btn-secondary" style="margin-right: 10px;">Export Pairs</button>
+                        <button id="importPairs" class="btn-secondary">Import Pairs</button>
+                        <input type="file" id="importFile" accept=".json" style="display: none;">
+                    </div>
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        ${pairs.length > 0 ?
+                pairs.map(pair => `
+                                <div class="pair-item" style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #eee;">
+                                    <div>
+                                        <strong>${pair.customer}</strong> - ${pair.workItem}
+                                    </div>
+                                    <button class="btn-secondary mark-expired" data-customer="${pair.customer}" data-workitem="${pair.workItem}" style="padding: 4px 8px; font-size: 12px;">
+                                        Mark Expired
+                                    </button>
+                                </div>
+                            `).join('') :
+                '<p style="text-align: center; color: #666; padding: 20px;">No customer-work item pairs found.</p>'
+            }
+                    </div>
+                </div>
+                <div class="modal-footer" style="margin-top: 20px; text-align: right;">
+                    <button id="closePairsModal" class="btn-primary">Close</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        // Event handlers for the modal
+        modal.querySelector('.close-modal').addEventListener('click', () => modal.remove());
+        modal.querySelector('#closePairsModal').addEventListener('click', () => modal.remove());
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) modal.remove();
+        });
+
+        // Export functionality
+        modal.querySelector('#exportPairs').addEventListener('click', () => {
+            this.exportCustomerWorkPairs();
+        });
+
+        // Import functionality
+        modal.querySelector('#importPairs').addEventListener('click', () => {
+            modal.querySelector('#importFile').click();
+        });
+
+        modal.querySelector('#importFile').addEventListener('change', (e) => {
+            this.importCustomerWorkPairs(e.target.files[0]);
+            modal.remove();
+        });
+
+        // Mark as expired functionality
+        modal.querySelectorAll('.mark-expired').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const customer = e.target.getAttribute('data-customer');
+                const workItem = e.target.getAttribute('data-workitem');
+                this.markPairAsExpired(customer, workItem);
+                this.showNotification(`Marked ${customer} - ${workItem} as expired`, 'success');
+                modal.remove();
+                this.openCustomerWorkPairsModal(); // Refresh the modal
+            });
+        });
+    }
+
+    exportCustomerWorkPairs() {
+        const pairs = this.getCustomerWorkPairs();
+        const data = JSON.stringify(pairs, null, 2);
+        const blob = new Blob([data], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'customer-work-pairs.json';
+        a.click();
+        URL.revokeObjectURL(url);
+        this.showNotification('Customer-work pairs exported successfully', 'success');
+    }
+
+    importCustomerWorkPairs(file) {
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const pairs = JSON.parse(e.target.result);
+                if (Array.isArray(pairs)) {
+                    pairs.forEach(pair => {
+                        if (pair.customer && pair.workItem) {
+                            this.addCustomerWorkPair(pair.customer, pair.workItem);
+                        }
+                    });
+                    this.showNotification(`Imported ${pairs.length} customer-work pairs`, 'success');
+                } else {
+                    this.showNotification('Invalid file format', 'error');
+                }
+            } catch (error) {
+                this.showNotification('Failed to import file', 'error');
+            }
+        };
+        reader.readAsText(file);
     }
 }
 
